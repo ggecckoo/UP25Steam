@@ -1,0 +1,25 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+**/SupabaseConfig.plist
+.bin/
+supabase/.temp/
+build/
+dist/
+
+# Steamworks account-specific build files
+steam/app_build_*.vdf
+!steam/app_build_APPID.vdf.example
+steam/depot_build_*.vdf
+!steam/depot_build_MACOS_DEPOT_ID.vdf.example
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# macOS
+.DS_Store

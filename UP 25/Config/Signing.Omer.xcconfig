@@ -1,0 +1,10 @@
+// Ömer Faruk ATICI — TestFlight / App Store Connect imza override
+// Takım: Z927F9H783 · Bundle: com.atikolabs.up2540
+//
+// Kullanım: Xcode’da Archive öncesi bu değerleri Signing & Capabilities /
+// Build Settings’e uygula (veya bu xcconfig’i target’a bağla).
+// main varsayılanı Çağatay kimliğidir; bu dosya pbxproj’i değiştirmez.
+
+DEVELOPMENT_TEAM = Z927F9H783
+PRODUCT_BUNDLE_IDENTIFIER = com.atikolabs.up2540
+CURRENT_PROJECT_VERSION = 1.001

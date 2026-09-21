@@ -1,0 +1,14 @@
+"DepotBuildConfig"
+{
+    "DepotID" "<MACOS_DEPOT_ID>"
+    "ContentRoot" "../dist/steam-content"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "recursive" "1"
+    }
+
+    "FileExclusion" "*.DS_Store"
+}
