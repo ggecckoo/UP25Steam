@@ -1,0 +1,14 @@
+"DepotBuildConfig"
+{
+    "DepotID" "<WINDOWS_DEPOT_ID>"
+    "ContentRoot" "../dist/steam-windows"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "recursive" "1"
+    }
+
+    "FileExclusion" "*.DS_Store"
+}

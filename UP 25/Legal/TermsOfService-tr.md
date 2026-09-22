@@ -1,8 +1,8 @@
 # Kullanım Koşulları — 25-40
 
-**Son güncelleme: 21 Eylül 2026**
+**Son güncelleme: 22 Eylül 2026**
 
-Bu Koşullar, Atiko Labs (“biz”, “bize”, “bizim”) tarafından Apple cihazları ve Steam üzerinden macOS için yayımlanan 25-40 oyun uygulamasının (“Uygulama”) kullanımını düzenler. Uygulamayı indirerek veya kullanarak bu koşulları kabul edersiniz. Kabul etmiyorsanız Uygulamayı kullanmayın.
+Bu Koşullar, Atiko Labs (“biz”, “bize”, “bizim”) tarafından Apple cihazları ile Steam üzerinden macOS, Windows ve Steam Deck için yayımlanan 25-40 oyun uygulamasının (“Uygulama”) kullanımını düzenler. Uygulamayı indirerek veya kullanarak bu koşulları kabul edersiniz. Kabul etmiyorsanız Uygulamayı kullanmayın.
 
 ## 1. Uygulama nedir
 

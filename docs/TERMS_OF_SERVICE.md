@@ -1,6 +1,6 @@
 # Terms of Service — 25-40
 
-**Last updated: September 21, 2026**
+**Last updated: September 22, 2026**
 
 > Canonical public web copy. Keep it aligned with the bundled legal files and
 > the short in-app fallback (`settings.terms.body` in
@@ -9,9 +9,9 @@
 ---
 
 These Terms govern your use of the 25-40 game application (the "App"), published
-by Atiko Labs ("we", "us", "our") for Apple devices and macOS through Steam. By
-downloading or using the App you agree to them. If you do not agree, do not use
-the App.
+by Atiko Labs ("we", "us", "our") for Apple devices and, through Steam, for
+macOS, Windows, and Steam Deck. By downloading or using the App you agree to
+them. If you do not agree, do not use the App.
 
 ## 1. What the App is
 

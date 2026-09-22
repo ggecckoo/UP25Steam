@@ -1,6 +1,6 @@
 # Privacy Policy — 25-40
 
-**Last updated: September 21, 2026**
+**Last updated: September 22, 2026**
 
 > This is the canonical public web copy. Keep its disclosures aligned with:
 > - `UP 25/Legal/PrivacyPolicy.md` and `PrivacyPolicy-tr.md`
@@ -14,8 +14,8 @@
 ---
 
 25-40 ("the App") is a card game published by Atiko Labs ("we", "us", "our").
-This policy covers the Apple mobile version and the macOS version distributed
-through Steam.
+This policy covers the Apple mobile version and the macOS, Windows, and Steam
+Deck versions distributed through Steam.
 
 ## 1. The short version
 

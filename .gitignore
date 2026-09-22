@@ -1,4 +1,5 @@
 # Secrets / local config
+.toolchain/
 .env
 .env.*
 !.env.example

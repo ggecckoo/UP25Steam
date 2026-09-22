@@ -1,8 +1,8 @@
 # Gizlilik Politikası — 25-40
 
-**Son güncelleme: 21 Eylül 2026**
+**Son güncelleme: 22 Eylül 2026**
 
-25-40 (“Uygulama”), Atiko Labs (“biz”, “bize”, “bizim”) tarafından yayımlanan bir kart oyunudur. Bu politika Apple mobil sürümünü ve Steam üzerinden dağıtılan macOS sürümünü kapsar.
+25-40 (“Uygulama”), Atiko Labs (“biz”, “bize”, “bizim”) tarafından yayımlanan bir kart oyunudur. Bu politika Apple mobil sürümünü ve Steam üzerinden dağıtılan macOS, Windows ve Steam Deck sürümlerini kapsar.
 
 ## 1. Kısa özet
 
