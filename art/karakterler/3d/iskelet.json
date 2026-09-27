@@ -1,0 +1,435 @@
+{
+  "skeleton": "seat-v1",
+  "unit": "meter",
+  "up": "+Y",
+  "forward": "+Z",
+  "bind": "seated, both hands together over the felt",
+  "bones": [
+    {
+      "name": "Hips",
+      "parent": null,
+      "translation": [
+        0.0,
+        0.5,
+        0.0
+      ],
+      "eulerXYZ": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Spine",
+      "parent": "Hips",
+      "translation": [
+        0.0,
+        0.12,
+        0.0
+      ],
+      "eulerXYZ": [
+        14,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Chest",
+      "parent": "Spine",
+      "translation": [
+        0.0,
+        0.15,
+        0.0
+      ],
+      "eulerXYZ": [
+        10,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Neck",
+      "parent": "Chest",
+      "translation": [
+        0.0,
+        0.16,
+        0.02
+      ],
+      "eulerXYZ": [
+        16,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Head",
+      "parent": "Neck",
+      "translation": [
+        0.0,
+        0.08,
+        0.0
+      ],
+      "eulerXYZ": [
+        8,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Muzzle",
+      "parent": "Head",
+      "translation": [
+        0.0,
+        -0.02,
+        0.06
+      ],
+      "eulerXYZ": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "EarL",
+      "parent": "Head",
+      "translation": [
+        -0.07,
+        0.08,
+        0.0
+      ],
+      "eulerXYZ": [
+        0,
+        0,
+        18
+      ]
+    },
+    {
+      "name": "EarR",
+      "parent": "Head",
+      "translation": [
+        0.07,
+        0.08,
+        0.0
+      ],
+      "eulerXYZ": [
+        0,
+        0,
+        -18
+      ]
+    },
+    {
+      "name": "HornL",
+      "parent": "Head",
+      "translation": [
+        -0.05,
+        0.09,
+        -0.02
+      ],
+      "eulerXYZ": [
+        -110,
+        -15,
+        35
+      ]
+    },
+    {
+      "name": "HornR",
+      "parent": "Head",
+      "translation": [
+        0.05,
+        0.09,
+        -0.02
+      ],
+      "eulerXYZ": [
+        -110,
+        15,
+        -35
+      ]
+    },
+    {
+      "name": "ClavicleL",
+      "parent": "Chest",
+      "translation": [
+        -0.08,
+        0.1,
+        0.03
+      ],
+      "eulerXYZ": [
+        0,
+        10,
+        8
+      ]
+    },
+    {
+      "name": "UpperArmL",
+      "parent": "ClavicleL",
+      "translation": [
+        -0.1,
+        -0.02,
+        0.0
+      ],
+      "eulerXYZ": [
+        -60,
+        8,
+        14
+      ]
+    },
+    {
+      "name": "ForearmL",
+      "parent": "UpperArmL",
+      "translation": [
+        0.0,
+        -0.22,
+        0.0
+      ],
+      "eulerXYZ": [
+        -86,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "HandL",
+      "parent": "ForearmL",
+      "translation": [
+        0.0,
+        -0.18,
+        0.0
+      ],
+      "eulerXYZ": [
+        -10,
+        15,
+        0
+      ]
+    },
+    {
+      "name": "ThumbL",
+      "parent": "HandL",
+      "translation": [
+        0.03,
+        -0.015,
+        0.02
+      ],
+      "eulerXYZ": [
+        15,
+        0,
+        35
+      ]
+    },
+    {
+      "name": "IndexL",
+      "parent": "HandL",
+      "translation": [
+        -0.005,
+        -0.045,
+        0.025
+      ],
+      "eulerXYZ": [
+        30,
+        0,
+        6
+      ]
+    },
+    {
+      "name": "ClavicleR",
+      "parent": "Chest",
+      "translation": [
+        0.08,
+        0.1,
+        0.03
+      ],
+      "eulerXYZ": [
+        0,
+        -10,
+        -8
+      ]
+    },
+    {
+      "name": "UpperArmR",
+      "parent": "ClavicleR",
+      "translation": [
+        0.1,
+        -0.02,
+        0.0
+      ],
+      "eulerXYZ": [
+        -60,
+        -8,
+        -14
+      ]
+    },
+    {
+      "name": "ForearmR",
+      "parent": "UpperArmR",
+      "translation": [
+        0.0,
+        -0.22,
+        0.0
+      ],
+      "eulerXYZ": [
+        -86,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "HandR",
+      "parent": "ForearmR",
+      "translation": [
+        0.0,
+        -0.18,
+        0.0
+      ],
+      "eulerXYZ": [
+        -10,
+        -15,
+        0
+      ]
+    },
+    {
+      "name": "ThumbR",
+      "parent": "HandR",
+      "translation": [
+        -0.03,
+        -0.015,
+        0.02
+      ],
+      "eulerXYZ": [
+        15,
+        0,
+        -35
+      ]
+    },
+    {
+      "name": "IndexR",
+      "parent": "HandR",
+      "translation": [
+        0.005,
+        -0.045,
+        0.025
+      ],
+      "eulerXYZ": [
+        30,
+        0,
+        -6
+      ]
+    },
+    {
+      "name": "ThighL",
+      "parent": "Hips",
+      "translation": [
+        -0.08,
+        -0.04,
+        0.02
+      ],
+      "eulerXYZ": [
+        -48,
+        6,
+        4
+      ]
+    },
+    {
+      "name": "ShinL",
+      "parent": "ThighL",
+      "translation": [
+        0.0,
+        -0.26,
+        0.0
+      ],
+      "eulerXYZ": [
+        24,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "FootL",
+      "parent": "ShinL",
+      "translation": [
+        0.0,
+        -0.24,
+        0.0
+      ],
+      "eulerXYZ": [
+        10,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "ThighR",
+      "parent": "Hips",
+      "translation": [
+        0.08,
+        -0.04,
+        0.02
+      ],
+      "eulerXYZ": [
+        -48,
+        -6,
+        -4
+      ]
+    },
+    {
+      "name": "ShinR",
+      "parent": "ThighR",
+      "translation": [
+        0.0,
+        -0.26,
+        0.0
+      ],
+      "eulerXYZ": [
+        24,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "FootR",
+      "parent": "ShinR",
+      "translation": [
+        0.0,
+        -0.24,
+        0.0
+      ],
+      "eulerXYZ": [
+        10,
+        0,
+        0
+      ]
+    }
+  ],
+  "clips": {
+    "SitIdle": {
+      "loop": true,
+      "seconds": 2.4
+    },
+    "PlayCard": {
+      "loop": false,
+      "seconds": 1.15
+    },
+    "LeanIn": {
+      "loop": false,
+      "seconds": 0.55
+    },
+    "LeanBack": {
+      "loop": false,
+      "seconds": 0.55
+    },
+    "WatchLeft": {
+      "loop": false,
+      "seconds": 0.4
+    },
+    "WatchRight": {
+      "loop": false,
+      "seconds": 0.4
+    }
+  },
+  "presets": [
+    "kaya",
+    "sis",
+    "kok",
+    "nida",
+    "kul",
+    "dere"
+  ]
+}
