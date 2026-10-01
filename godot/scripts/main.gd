@@ -1,16 +1,13 @@
 extends Control
 
-const TableScene = preload("res://scripts/table_view.gd")
 const SAVE_PATH := "user://25-40-save.json"
 
-const FELT := Color("0A3B2E")
 const FELT_LIT := Color("1E6E52")
 const PANEL := Color("082C22")
 const BRASS := Color("C9A44C")
 const BRASS_HI := Color("F0DA9E")
 const IVORY := Color("F7F2E4")
 const IVORY_DIM := Color(0.97, 0.95, 0.89, 0.75)
-const LAC := Color("B3302B")
 const INK := Color("1B1712")
 
 const SCREEN_MENU := 0
@@ -25,14 +22,16 @@ var game: Match
 var screen := SCREEN_MENU
 var focus_index := 0
 var card_index := 0
+var queued_play := -1
 var turn_token := -1
 var how_from := SCREEN_MENU
 var last_sig := ""
-var heard_table := 0
-var heard_phase := 0
 var buttons: Array = []
-var card_player: AudioStreamPlayer
-var reveal_player: AudioStreamPlayer
+var sounds: Dictionary = {}
+var world: Node3D
+var hud: Control
+var port: SubViewport
+var _name_labels: Dictionary = {}
 
 
 func _ready() -> void:
@@ -42,24 +41,24 @@ func _ready() -> void:
 	game = Match.new()
 	game.configure(text, SAVE_PATH)
 	theme = _make_theme()
-	card_player = AudioStreamPlayer.new()
-	reveal_player = AudioStreamPlayer.new()
-	card_player.stream = _tone(880.0, 0.07)
-	reveal_player.stream = _tone(620.0, 0.16)
-	add_child(card_player)
-	add_child(reveal_player)
+	_add_sound("card", _noise(0.11, 46.0, 0.28, 0.95, 11), -4.0)
+	_add_sound("flip", _noise(0.06, 85.0, 0.7, 0.6, 23), -9.0)
+	_add_sound("deal", _noise(0.045, 105.0, 0.5, 0.42, 37), -15.0)
+	_mount_world()
+	get_viewport().size_changed.connect(_on_view_resized)
 	_rebuild()
 
 
 func _process(delta: float) -> void:
-	game.tick(delta)
-	if game.sound_on:
-		if game.phase == Match.PHASE_REVEAL and heard_phase != Match.PHASE_REVEAL:
-			reveal_player.play()
-		elif game.table.size() > heard_table:
-			card_player.play()
-	heard_phase = game.phase
-	heard_table = game.table.size()
+	var wait := world != null and game.phase == Match.PHASE_PLAYING and bool(world.call("busy"))
+	if not wait:
+		game.tick(delta)
+	if world != null and world.has_method("sync_match"):
+		var in_match := screen == SCREEN_PLAY or screen == SCREEN_PAUSE or screen == SCREEN_OVER
+		world.call("select_card", card_index if game.human_turn() else -1)
+		world.call("sync_match", game, in_match, delta)
+	_flush_play()
+	_fit_view()
 	if (screen == SCREEN_PLAY or screen == SCREEN_PAUSE) and game.phase == Match.PHASE_OVER:
 		screen = SCREEN_OVER
 		focus_index = 0
@@ -73,6 +72,7 @@ func _process(delta: float) -> void:
 	if sig != last_sig:
 		last_sig = sig
 		_rebuild()
+	_track_names()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -113,11 +113,11 @@ func _input_how(event: InputEvent) -> void:
 		focus_index = 0
 		_refresh()
 	elif event.is_action_pressed("ui_up"):
-		var scroll := get_node_or_null("HowScroll") as ScrollContainer
+		var scroll := hud.get_node_or_null("HowScroll") as ScrollContainer
 		if scroll:
 			scroll.scroll_vertical = maxi(0, scroll.scroll_vertical - 48)
 	elif event.is_action_pressed("ui_down"):
-		var scroll := get_node_or_null("HowScroll") as ScrollContainer
+		var scroll := hud.get_node_or_null("HowScroll") as ScrollContainer
 		if scroll:
 			scroll.scroll_vertical += 48
 
@@ -130,33 +130,70 @@ func _input_play(event: InputEvent) -> void:
 	var hand_size := 0
 	if not game.players.is_empty():
 		hand_size = game.players[0].hand.size()
+	if event is InputEventMouseMotion:
+		var hovered := _card_at(event.position)
+		if hovered >= 0:
+			card_index = hovered
+		return
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if game.phase == Match.PHASE_REVEAL:
+			game.skip_reveal()
+		else:
+			var clicked := _card_at(event.position)
+			if clicked >= 0:
+				card_index = clicked
+				_play(clicked)
+		_refresh()
+		return
 	if event.is_action_pressed("ui_left") or event.is_action_pressed("ui_up"):
 		card_index = wrapi(card_index - 1, 0, maxi(hand_size, 1))
-		_refresh()
 	elif event.is_action_pressed("ui_right") or event.is_action_pressed("ui_down"):
 		card_index = wrapi(card_index + 1, 0, maxi(hand_size, 1))
-		_refresh()
 	elif event.is_action_pressed("ui_accept"):
 		if game.phase == Match.PHASE_REVEAL:
 			game.skip_reveal()
-		elif game.human_turn():
-			game.play_card(card_index)
+		else:
+			_play(card_index)
 		_refresh()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		var digit: int = int(event.keycode) - KEY_1
-		if digit >= 0 and digit <= 8 and game.human_turn() and digit < hand_size:
+		if digit >= 0 and digit <= 8 and digit < hand_size:
 			card_index = digit
-			game.play_card(digit)
+			_play(digit)
 			_refresh()
 
 
+func _card_at(point: Vector2) -> int:
+	if world == null or not world.has_method("pick_card") or not game.human_turn():
+		return -1
+	return int(world.call("pick_card", point))
+
+
+func _play(index: int) -> void:
+	if not game.human_turn():
+		return
+	if world != null and bool(world.call("busy")):
+		queued_play = index
+		return
+	queued_play = -1
+	game.play_card(index)
+
+
+func _flush_play() -> void:
+	if queued_play < 0:
+		return
+	if not game.human_turn() or queued_play >= game.players[0].hand.size():
+		queued_play = -1
+	elif world == null or not bool(world.call("busy")):
+		var index := queued_play
+		queued_play = -1
+		game.play_card(index)
+
+
 func _signature() -> String:
-	var flip := 0
-	if game.phase == Match.PHASE_REVEAL:
-		flip = int(game.reveal_age / Match.FLIP_STEP)
-	return "%d|%d|%d|%d|%s|%s|%s|%d|%d|%d|%d|%d" % [
+	return "%d|%d|%d|%d|%s|%s|%s|%d|%d|%d" % [
 		screen, game.phase, game.round_no, game.table.size(),
-		game.sum_shown, game.paused, text.lang, card_index, focus_index, flip,
+		game.sum_shown, game.paused, text.lang, focus_index,
 		game.acting(), game.holder,
 	]
 
@@ -165,17 +202,59 @@ func _refresh() -> void:
 	last_sig = ""
 
 
+func _mount_world() -> void:
+	var view := SubViewportContainer.new()
+	view.name = "WorldView"
+	view.set_anchors_preset(PRESET_FULL_RECT)
+	view.mouse_filter = MOUSE_FILTER_IGNORE
+	view.stretch = true
+	add_child(view)
+	port = SubViewport.new()
+	port.name = "View"
+	port.size = Vector2i(1280, 800)
+	port.own_world_3d = true
+	port.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	port.handle_input_locally = false
+	view.add_child(port)
+	var packed: PackedScene = load("res://scenes/room_preview.tscn")
+	world = packed.instantiate() as Node3D
+	world.set("play_mode", true)
+	port.add_child(world)
+	if world.has_signal("card_sound"):
+		world.connect("card_sound", _on_card_sound)
+	hud = Control.new()
+	hud.name = "Hud"
+	hud.set_anchors_preset(PRESET_FULL_RECT)
+	hud.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(hud)
+
+
+func _on_view_resized() -> void:
+	_fit_view()
+	_refresh()
+
+
+func _fit_view() -> void:
+	if port == null:
+		return
+	var size := Vector2i(get_viewport().get_visible_rect().size)
+	if size.x < 2 or size.y < 2 or port.size == size:
+		return
+	port.size = size
+	_refresh()
+
+
+func _adopt(node: Node) -> void:
+	hud.add_child(node)
+
+
 func _rebuild() -> void:
-	for child in get_children():
-		if child == card_player or child == reveal_player:
-			continue
+	if hud == null:
+		return
+	for child in hud.get_children():
 		child.queue_free()
 	buttons = []
-	var bg := ColorRect.new()
-	bg.color = Color("110D0B")
-	bg.set_anchors_preset(PRESET_FULL_RECT)
-	bg.mouse_filter = MOUSE_FILTER_IGNORE
-	add_child(bg)
+	_name_labels.clear()
 	_room()
 	match screen:
 		SCREEN_MENU:
@@ -195,56 +274,54 @@ func _rebuild() -> void:
 
 
 func _room() -> void:
-	var view = TableScene.new()
-	view.set_anchors_preset(PRESET_FULL_RECT)
-	view.seats = _seat_poses()
-	view.your_turn = screen == SCREEN_PLAY and game.human_turn()
-	add_child(view)
-	for seat in view.seats:
-		var caption: String = seat.name
-		if int(seat.cards) > 0 and screen != SCREEN_MENU:
-			caption += "  ·  %d" % int(seat.cards)
-		var y_off: float = 156.0 * float(seat.scale)
-		_label(caption, 18, seat.pos + Vector2(0, y_off), BRASS_HI if seat.lit else IVORY, HORIZONTAL_ALIGNMENT_CENTER)
-
-
-func _seat_poses() -> Array:
-	var defs: Array = [
-		{"id": 1, "pos": Vector2(250, 228), "scale": 1.02, "coat": Color("1B2433"), "skin": Color("C9A07A"), "hair": Color("E4DCCE"), "style": "short", "fallback": "Kemal"},
-		{"id": 2, "pos": Vector2(640, 142), "scale": 0.82, "coat": Color("7A2432"), "skin": Color("E2BC9A"), "hair": Color("1A120E"), "style": "bun", "fallback": "Nur"},
-		{"id": 3, "pos": Vector2(1030, 232), "scale": 1.06, "coat": Color("3C4A34"), "skin": Color("A67C52"), "hair": Color("2A2118"), "style": "bald", "fallback": "Sabri"},
-	]
+	if screen == SCREEN_HOW or screen == SCREEN_LANG:
+		return
+	if world == null or not world.has_method("seat_screen_pos"):
+		return
 	var winner := -1
 	if screen == SCREEN_OVER and not game.standings.is_empty():
 		winner = int(game.standings[0].id)
-	var poses: Array = []
-	for item in defs:
-		var id: int = item.id
-		var known: bool = game.players.size() == 4
-		var player_name: String = item.fallback
-		var cards := 0
-		if known:
-			var player: Match.Player = game.players[id]
-			player_name = player.player_name
-			cards = player.hand.size()
-		var thinking := screen == SCREEN_PLAY and game.acting() == id
-		poses.append({
-			"pos": item.pos,
-			"scale": item.scale,
-			"coat": item.coat,
-			"skin": item.skin,
-			"hair": item.hair,
-			"style": item.style,
-			"name": player_name,
-			"cards": cards,
-			"lit": thinking or winner == id or (screen == SCREEN_PLAY and game.holder == id),
-			"holder": screen == SCREEN_PLAY and game.holder == id,
-			"thinking": thinking,
-		})
-	return poses
+	for id in [1, 2, 3]:
+		var pos: Vector2 = world.call("seat_screen_pos", id)
+		if pos.x < 0.0:
+			continue
+		var acting: bool = screen == SCREEN_PLAY and game.acting() == id
+		var color := BRASS_HI if acting or winner == id else IVORY_DIM
+		var label := _label(_caption(id), 18 if acting else 17, pos, color, HORIZONTAL_ALIGNMENT_CENTER)
+		_name_labels[id] = label
+
+
+func _caption(id: int) -> String:
+	if game.players.size() != 4 or screen == SCREEN_MENU:
+		return str(world.call("seat_caption", id))
+	var caption: String = game.players[id].player_name
+	var cards := int(world.call("fan_count", id))
+	if cards > 0:
+		caption += "  ·  %d" % cards
+	return caption
+
+
+func _track_names() -> void:
+	if world == null or not world.has_method("seat_screen_pos"):
+		return
+	for id in _name_labels:
+		var label: Label = _name_labels[id]
+		if not is_instance_valid(label):
+			continue
+		var pos: Vector2 = world.call("seat_screen_pos", id)
+		if pos.x < 0.0:
+			label.visible = false
+			continue
+		label.visible = true
+		label.position = Vector2(pos.x - 400.0, pos.y)
+		label.text = _caption(id)
+		var acting: bool = screen == SCREEN_PLAY and game.acting() == id
+		label.add_theme_color_override("font_color", BRASS_HI if acting else IVORY_DIM)
+		label.add_theme_font_size_override("font_size", 18 if acting else 17)
 
 
 func _build_menu() -> void:
+	_shade(Rect2(20, 8, 640, 168), 0.5)
 	_label(text.t("brand.name"), 42, Vector2(36, 18), BRASS_HI, HORIZONTAL_ALIGNMENT_LEFT)
 	_label(text.t("menu.tagline1"), 22, Vector2(36, 68), IVORY, HORIZONTAL_ALIGNMENT_LEFT)
 	_label(text.t("menu.tagline2"), 20, Vector2(36, 98), BRASS, HORIZONTAL_ALIGNMENT_LEFT)
@@ -257,6 +334,7 @@ func _build_menu() -> void:
 	ids.append("lang")
 	ids.append("quit")
 	var y := 430.0
+	_shade(Rect2(400, y - 18, 480, ids.size() * 56 + 20), 0.66)
 	for i in ids.size():
 		var id: String = ids[i]
 		var caption := ""
@@ -300,13 +378,14 @@ func _menu_activate(id: String) -> void:
 
 func _build_how() -> void:
 	_veil()
+	_shade(Rect2(56, 92, 1168, 650), 0.96)
 	_label(text.t("howto.title"), 36, Vector2(640, 28), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
 	_back_button()
 	var scroll := ScrollContainer.new()
 	scroll.name = "HowScroll"
 	scroll.position = Vector2(80, 108)
 	scroll.size = Vector2(1120, 620)
-	add_child(scroll)
+	_adopt(scroll)
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(1080, 0)
 	box.add_theme_constant_override("separation", 18)
@@ -324,6 +403,7 @@ func _build_how() -> void:
 
 func _build_lang() -> void:
 	_veil()
+	_shade(Rect2(280, 88, 720, 660), 0.96)
 	_label(text.t("language.title"), 36, Vector2(640, 24), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
 	_back_button()
 	var y := 100.0
@@ -337,55 +417,17 @@ func _build_lang() -> void:
 func _build_play() -> void:
 	if game.players.size() < 4:
 		return
-	_label(text.format_key("game.round %lld %lld", [game.round_no, Match.ROUNDS]), 18, Vector2(1100, 18), BRASS_HI, HORIZONTAL_ALIGNMENT_RIGHT)
-	var play_order := game.order()
-	for i in 4:
-		var slot: Vector2 = TableScene.SLOT_POS[i]
-		var owner: Match.Player = game.players[play_order[i]]
-		_label(owner.player_name, 14, slot + Vector2(TableScene.SLOT_SIZE.x * 0.5, -18), BRASS_HI if play_order[i] == game.holder else IVORY_DIM, HORIZONTAL_ALIGNMENT_CENTER)
-		if i < game.table.size():
-			var played: Match.Played = game.table[i]
-			_card_face(played.card, slot, TableScene.SLOT_SIZE, game.card_face_up(i), false)
-		elif game.acting() == play_order[i]:
-			var empty := ColorRect.new()
-			empty.position = slot
-			empty.size = TableScene.SLOT_SIZE
-			empty.color = Color("C9A44C")
-			empty.mouse_filter = MOUSE_FILTER_IGNORE
-			add_child(empty)
-	if game.sum_shown:
-		_label(text.t("game.tableTotal") + "  " + str(game.table_sum()), 18, Vector2(640, 568), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
-	if game.verdict_text() != "":
-		_label(game.verdict_text(), 16, Vector2(640, 592), IVORY, HORIZONTAL_ALIGNMENT_CENTER, 900)
-	_label(game.status_text(), 20, Vector2(640, 616), IVORY, HORIZONTAL_ALIGNMENT_CENTER, 800)
+	var view_size := get_viewport_rect().size
+	_label(text.format_key("game.round %lld %lld", [game.round_no, Match.ROUNDS]), 18, Vector2(view_size.x - 28, 16), BRASS_HI, HORIZONTAL_ALIGNMENT_RIGHT)
+	_label(game.status_text(), 20, Vector2(36, 16), IVORY, HORIZONTAL_ALIGNMENT_LEFT, 560)
 	var hint := game.hint_text()
 	if hint != "":
-		_label(hint, 16, Vector2(640, 644), IVORY_DIM, HORIZONTAL_ALIGNMENT_CENTER, 800)
-	if screen == SCREEN_PAUSE:
-		return
-	_hand(game.players[0])
-
-
-func _hand(me: Match.Player) -> void:
-	var n := me.hand.size()
-	if n == 0:
-		return
-	var card_w := 84.0
-	var card_h := 118.0
-	var left := 250.0
-	var span := 760.0
-	for i in n:
-		var t := 0.0 if n == 1 else float(i) / float(n - 1)
-		var x := left + t * span - card_w * 0.5
-		var y := 648.0 + absf(t - 0.5) * 34.0
-		var selected := i == card_index and game.human_turn()
-		if selected:
-			y -= 30.0
-		var card: Match.Card = me.hand[i]
-		var button := _card_face(card, Vector2(x, y), Vector2(card_w, card_h), true, selected, i)
-		button.pivot_offset = Vector2(card_w * 0.5, card_h)
-		button.rotation_degrees = lerpf(-14.0, 14.0, t)
-		button.z_index = 20 if selected else i
+		_label(hint, 16, Vector2(36, 48), IVORY_DIM, HORIZONTAL_ALIGNMENT_LEFT, 560)
+	var mid_x := view_size.x * 0.5
+	if game.sum_shown:
+		_label(text.t("game.tableTotal") + "  " + str(game.table_sum()), 24, Vector2(mid_x, 10), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
+	if game.verdict_text() != "":
+		_label(game.verdict_text(), 18, Vector2(mid_x, 44), IVORY, HORIZONTAL_ALIGNMENT_CENTER, 640)
 
 
 func _build_pause() -> void:
@@ -393,12 +435,12 @@ func _build_pause() -> void:
 	dim.color = Color(0, 0, 0, 0.6)
 	dim.set_anchors_preset(PRESET_FULL_RECT)
 	dim.mouse_filter = MOUSE_FILTER_STOP
-	add_child(dim)
+	_adopt(dim)
 	var panel := Panel.new()
 	panel.position = Vector2(330, 390)
 	panel.size = Vector2(620, 360)
 	panel.add_theme_stylebox_override("panel", _panel_style(true))
-	add_child(panel)
+	_adopt(panel)
 	_label(text.t("pause.title"), 32, Vector2(640, 408), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
 	var sound_state := text.t("ui.on") if game.sound_on else text.t("ui.off")
 	var items := [
@@ -434,13 +476,14 @@ func _pause_activate(id: String) -> void:
 
 func _veil() -> void:
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.72)
+	dim.color = Color(0, 0, 0, 0.84)
 	dim.set_anchors_preset(PRESET_FULL_RECT)
 	dim.mouse_filter = MOUSE_FILTER_STOP
-	add_child(dim)
+	_adopt(dim)
 
 
 func _build_over() -> void:
+	_shade(Rect2(300, 360, 680, 410), 0.72)
 	_label(text.format_key("over.roundsDone %lld", [Match.ROUNDS]), 18, Vector2(640, 390), BRASS, HORIZONTAL_ALIGNMENT_CENTER)
 	if not game.standings.is_empty():
 		var top: Dictionary = game.standings[0]
@@ -453,7 +496,7 @@ func _build_over() -> void:
 		bg.size = Vector2(600, 32)
 		bg.color = Color("6E5320") if i == 0 else (FELT_LIT if row.id == 0 else Color(0, 0, 0, 0.28))
 		bg.mouse_filter = MOUSE_FILTER_IGNORE
-		add_child(bg)
+		_adopt(bg)
 		_label("%d   %s    %s" % [i + 1, row.name, str(row.score)], 18, Vector2(356, bg.position.y + 4), BRASS_HI if i == 0 else IVORY, HORIZONTAL_ALIGNMENT_LEFT)
 	_button(text.t("over.newGame"), Vector2(410, 650), Vector2(460, 48), true, focus_index == 0, func ():
 		game.new_game()
@@ -492,7 +535,9 @@ func _label(value: String, size: int, pos: Vector2, color: Color, align: Horizon
 			label.position.x = pos.x - 400
 		elif align == HORIZONTAL_ALIGNMENT_RIGHT:
 			label.position.x = pos.x - 800
-	add_child(label)
+	label.add_theme_color_override("font_outline_color", Color(0.05, 0.03, 0.02, 0.92))
+	label.add_theme_constant_override("outline_size", 5)
+	_adopt(label)
 	return label
 
 
@@ -512,7 +557,7 @@ func _button(caption: String, pos: Vector2, size: Vector2, primary: bool, focuse
 	button.add_theme_color_override("font_pressed_color", font)
 	button.add_theme_font_size_override("font_size", 24 if size.y >= 60 else 22)
 	button.pressed.connect(action)
-	add_child(button)
+	_adopt(button)
 	buttons.append(button)
 
 
@@ -530,33 +575,16 @@ func _back_button() -> void:
 		focus_index = 0
 		_refresh()
 	)
-	add_child(button)
+	_adopt(button)
 
 
-func _card_face(card: Match.Card, pos: Vector2, size: Vector2, up: bool, selected: bool, hand_index := -1) -> Button:
-	var button := Button.new()
-	button.position = pos
-	button.size = size
-	button.focus_mode = Control.FOCUS_NONE
-	var fill := IVORY if up else FELT
-	var border := BRASS_HI if selected else BRASS
-	button.add_theme_stylebox_override("normal", _card_style(fill, border, selected))
-	button.add_theme_stylebox_override("hover", _card_style(fill, BRASS_HI, selected))
-	button.add_theme_stylebox_override("pressed", _card_style(fill, BRASS, selected))
-	if up:
-		button.text = "%s\n%s" % [card.label(), card.symbol()]
-		button.add_theme_color_override("font_color", LAC if card.red() else INK)
-		button.add_theme_color_override("font_hover_color", LAC if card.red() else INK)
-		button.add_theme_font_size_override("font_size", 22 if size.x >= 74 else 18)
-	if hand_index >= 0:
-		button.pressed.connect(_play_hand.bind(hand_index))
-	elif game.phase == Match.PHASE_REVEAL:
-		button.pressed.connect(func ():
-			game.skip_reveal()
-			_refresh()
-		)
-	add_child(button)
-	return button
+func _shade(rect: Rect2, alpha: float) -> void:
+	var plate := ColorRect.new()
+	plate.position = rect.position
+	plate.size = rect.size
+	plate.color = Color(0.04, 0.03, 0.02, alpha)
+	plate.mouse_filter = MOUSE_FILTER_IGNORE
+	_adopt(plate)
 
 
 func _choose_language(code: String) -> void:
@@ -564,15 +592,6 @@ func _choose_language(code: String) -> void:
 	game._save()
 	screen = SCREEN_MENU
 	focus_index = 0
-	_refresh()
-
-
-func _play_hand(index: int) -> void:
-	card_index = index
-	if game.human_turn():
-		game.play_card(index)
-	elif game.phase == Match.PHASE_REVEAL:
-		game.skip_reveal()
 	_refresh()
 
 
@@ -633,25 +652,39 @@ func _button_style(fill: Color, focused: bool) -> StyleBoxFlat:
 	return box
 
 
-func _card_style(fill: Color, border: Color, selected: bool) -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = fill
-	box.border_color = border
-	box.set_border_width_all(4 if selected else 2)
-	box.set_corner_radius_all(6)
-	return box
+func _add_sound(kind: String, stream: AudioStreamWAV, volume_db: float) -> void:
+	var player := AudioStreamPlayer.new()
+	player.stream = stream
+	player.volume_db = volume_db
+	player.max_polyphony = 4
+	add_child(player)
+	sounds[kind] = player
 
 
-func _tone(freq: float, seconds: float) -> AudioStreamWAV:
+func _on_card_sound(kind: String) -> void:
+	if not game.sound_on or not sounds.has(kind):
+		return
+	var player: AudioStreamPlayer = sounds[kind]
+	player.pitch_scale = randf_range(0.88, 1.12)
+	player.play()
+
+
+func _noise(seconds: float, decay: float, smooth: float, gain: float, seed_value: int) -> AudioStreamWAV:
 	var rate := 22050
 	var count := int(rate * seconds)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
 	var data := PackedByteArray()
 	data.resize(count * 2)
+	var low := 0.0
+	var body := 0.0
 	for i in count:
-		var env := 1.0 - float(i) / float(count)
-		var sample := int(sin(TAU * freq * float(i) / float(rate)) * 8000.0 * env)
-		data[i * 2] = sample & 0xFF
-		data[i * 2 + 1] = (sample >> 8) & 0xFF
+		var t := float(i) / float(rate)
+		var env := exp(-t * decay) * minf(1.0, t / 0.0015)
+		low = lerpf(low, rng.randf_range(-1.0, 1.0), smooth)
+		body = lerpf(body, low, 0.35)
+		var sample := clampf((low * 0.6 + body * 0.8) * env * gain, -1.0, 1.0)
+		data.encode_s16(i * 2, int(sample * 30000.0))
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS
 	stream.mix_rate = rate

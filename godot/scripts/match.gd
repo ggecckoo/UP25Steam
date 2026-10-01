@@ -6,10 +6,13 @@ const CAP := 40
 const ROUNDS := 12
 const HAND_SIZE := 13
 const PENALTY_PER_CARD := 4
-const AI_DELAY := 1.15
+const THINK := {1: Vector2(1.9, 3.6), 2: Vector2(1.45, 2.7), 3: Vector2(1.25, 2.9)}
 const SUM_DELAY := 1.70
 const HOLD_DELAY := 2.90
 const FLIP_STEP := 0.36
+const REVEAL_LEAD := 1.3
+const ROUND_LEAD := 1.9
+const DEAL_LEAD := 3.6
 
 const PHASE_MENU := 0
 const PHASE_PLAYING := 1
@@ -54,6 +57,7 @@ var text: TextBank
 
 var _middle: Array = []
 var _rng := RandomNumberGenerator.new()
+var _pace := RandomNumberGenerator.new()
 var _timer := 0.0
 var _stage := STAGE_IDLE
 var _status := STATUS_NONE
@@ -154,6 +158,7 @@ static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, runni
 
 func _init() -> void:
 	_rng.randomize()
+	_pace.randomize()
 
 
 func configure(bank: TextBank, path: String) -> void:
@@ -167,7 +172,7 @@ func new_game() -> void:
 	_recorded = false
 	_applied = false
 	var deck := _new_deck()
-	var names := [text.t("common.player"), "Kemal", "Nur", "Sabri"]
+	var names := [text.t("common.player"), "Sis", "Kaya", "Karaca"]
 	players = []
 	for i in 4:
 		var player := Player.new()
@@ -182,7 +187,7 @@ func new_game() -> void:
 	round_no = 1
 	standings = []
 	table = []
-	_start_round()
+	_start_round(DEAL_LEAD)
 
 
 func can_resume() -> bool:
@@ -193,7 +198,7 @@ func resume() -> void:
 	if not can_resume():
 		return
 	_recorded = false
-	_start_round()
+	_start_round(0.6)
 
 
 func return_to_menu() -> void:
@@ -352,6 +357,10 @@ func hint_text() -> String:
 	return text.t("game.hint.other")
 
 
+func middle() -> Array:
+	return _middle
+
+
 func count_cards() -> int:
 	var total := _middle.size() + table.size()
 	for player in players:
@@ -359,7 +368,7 @@ func count_cards() -> int:
 	return total
 
 
-func _start_round() -> void:
+func _start_round(lead := 0.0) -> void:
 	phase = PHASE_PLAYING
 	table = []
 	has_outcome = false
@@ -369,6 +378,8 @@ func _start_round() -> void:
 	paused = false
 	_can_resume = true
 	_arm_turn()
+	if _stage == STAGE_WAIT_AI:
+		_timer += lead
 	_save()
 
 
@@ -387,7 +398,19 @@ func _arm_turn() -> void:
 	_status = STATUS_THINKING
 	_status_name = players[seat].player_name
 	_stage = STAGE_WAIT_AI
-	_timer = AI_DELAY
+	_timer = _think_time(seat)
+
+
+func _think_time(seat: int) -> float:
+	var span: Vector2 = THINK.get(seat, Vector2(1.2, 2.4))
+	var time := _pace.randf_range(span.x, span.y)
+	if table.is_empty():
+		time += 0.45
+	elif table.size() == 3:
+		time += 0.25
+	if _pace.randf() < 0.18:
+		time += _pace.randf_range(0.5, 1.3)
+	return time
 
 
 func _tick_playing(dt: float) -> void:
@@ -428,9 +451,9 @@ func _begin_reveal() -> void:
 	outcome = outcome_for(table_sum())
 	has_outcome = true
 	sum_shown = false
-	reveal_age = 0.0
+	reveal_age = -REVEAL_LEAD
 	_stage = STAGE_FLIP
-	_timer = SUM_DELAY
+	_timer = SUM_DELAY + REVEAL_LEAD
 	_status = STATUS_REVEALING
 	_status_name = ""
 
@@ -474,7 +497,7 @@ func _finish_reveal() -> void:
 		_finish_game()
 		return
 	round_no += 1
-	_start_round()
+	_start_round(ROUND_LEAD)
 
 
 func _apply_round() -> void:
@@ -712,7 +735,7 @@ func _restore(file) -> bool:
 	if total != 52:
 		return false
 	var names = file.get("names", [])
-	var defaults := [text.t("common.player"), "Kemal", "Nur", "Sabri"]
+	var defaults := [text.t("common.player"), "Sis", "Kaya", "Karaca"]
 	players = []
 	for i in 4:
 		var player := Player.new()
@@ -721,6 +744,8 @@ func _restore(file) -> bool:
 		player.player_name = defaults[i]
 		if names is Array and names.size() == 4 and str(names[i]) != "":
 			player.player_name = str(names[i])
+		if i > 0 and player.player_name in ["Kemal", "Nur", "Sabri"]:
+			player.player_name = defaults[i]
 		player.hand = restored[i]
 		players.append(player)
 	_sort_hand(players[0].hand)

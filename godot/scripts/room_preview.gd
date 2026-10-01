@@ -1,16 +1,28 @@
 extends Node3D
 
+signal card_sound(kind: String)
+
+const SeatActor := preload("res://scripts/seat_actor.gd")
+const CardTable := preload("res://scripts/card_table.gd")
 const TABLE_WIDTH := 1.7
 const CHAIR_HEIGHT := 0.95
 const LAMP_WIDTH := 0.38
-const FELT_Y := 0.76
+const FELT_Y := 0.70
+const FELT_TOP := FELT_Y + 0.013
+const FELT_RADIUS := 0.755
 const SHADE_BOTTOM := 1.62
 const CAST := [
-	{"name": "kaya", "angle": 180.0, "style": "lead"},
-	{"name": "sis", "angle": 250.0, "style": "watch"},
-	{"name": "karaca", "angle": 110.0, "style": "settle"},
+	{"id": 2, "name": "kaya", "angle": 180.0, "style": "lead"},
+	{"id": 1, "name": "sis", "angle": 250.0, "style": "watch"},
+	{"id": 3, "name": "karaca", "angle": 110.0, "style": "settle"},
 ]
+const PLAYER := {"id": 0, "name": "kok", "angle": 0.0, "style": "player"}
+const SEAT_NAME := {1: "Sis", 2: "Kaya", 3: "Karaca"}
 const SEAT_TUCK := 0.04
+
+var play_mode := false
+var _actors: Dictionary = {}
+var _table: Node3D
 
 
 func _ready() -> void:
@@ -20,6 +32,7 @@ func _ready() -> void:
 	if table == null:
 		return
 	_fit_xz(table, TABLE_WIDTH)
+	_fit_floor_height(table, FELT_Y)
 	_sit_on_floor(table, FELT_Y, true)
 	if chair != null:
 		_fit_height(chair, CHAIR_HEIGHT)
@@ -30,19 +43,52 @@ func _ready() -> void:
 		var lamp_box := _world_aabb(lamp)
 		lamp.position.y += SHADE_BOTTOM - lamp_box.position.y
 	_cover_felt()
-	var seat_z := TABLE_WIDTH * 0.5 + 0.48
-	$Camera3D.position = Vector3(0.0, 1.18, seat_z)
-	$Camera3D.fov = 62.0
-	$Camera3D.look_at(Vector3(0.0, 1.05, -0.02))
+	var camera := $Camera3D as Camera3D
+	if play_mode and _actors.has(0):
+		var me: Node3D = _actors[0]
+		var eye: Vector3 = me.eye_point()
+		camera.global_position = eye + Vector3(0.0, 0.02, 0.0)
+		camera.fov = 56.0
+		camera.near = 0.06
+		camera.look_at(Vector3(0.0, FELT_TOP + 0.2, 0.22))
+		me.make_first_person(camera)
+	else:
+		var seat_z := TABLE_WIDTH * 0.5 + 0.48
+		camera.position = Vector3(0.0, 1.18, seat_z)
+		camera.fov = 62.0
+		camera.look_at(Vector3(0.0, 1.0, -0.02))
 	$SpotLight3D.position = Vector3(0.0, SHADE_BOTTOM - 0.05, 0.0)
 	$SpotLight3D.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
+	if play_mode:
+		for id in _actors:
+			_actors[id].camera = camera
+	if play_mode and _actors.size() == 4:
+		_table = CardTable.new()
+		_table.name = "CardTable"
+		add_child(_table)
+		var dirs := {}
+		for id in _actors:
+			var at: Vector3 = (_actors[id] as Node3D).global_position
+			dirs[id] = Vector3(at.x, 0.0, at.z).normalized()
+		_table.setup(_actors, dirs, camera, FELT_TOP)
+		_table.sound.connect(func(kind: String): card_sound.emit(kind))
+
+
+func _table_info() -> Dictionary:
+	return {
+		"center": Vector3.ZERO,
+		"radius": TABLE_WIDTH * 0.5 + 0.16,
+		"felt_radius": FELT_RADIUS + 0.05,
+		"felt_top": FELT_TOP,
+		"wood_top": FELT_TOP,
+	}
 
 
 func _cover_felt() -> void:
 	var felt := MeshInstance3D.new()
 	var disc := CylinderMesh.new()
-	disc.top_radius = 0.755
-	disc.bottom_radius = 0.755
+	disc.top_radius = FELT_RADIUS
+	disc.bottom_radius = FELT_RADIUS
 	disc.height = 0.012
 	var felt_mat := StandardMaterial3D.new()
 	felt_mat.albedo_color = Color(0.035, 0.145, 0.078)
@@ -64,7 +110,8 @@ func _cover_felt() -> void:
 	brass.roughness = 0.38
 	torus.material = brass
 	ring.mesh = torus
-	ring.position = Vector3(0.0, FELT_Y + 0.016, 0.0)
+	ring.scale = Vector3(1.0, 0.3, 1.0)
+	ring.position = Vector3(0.0, FELT_Y + 0.010, 0.0)
 	add_child(ring)
 
 
@@ -87,8 +134,12 @@ func _place_chairs(source: Node3D) -> Array[Node3D]:
 	var front := box.size.z * 0.5
 	var distance := TABLE_WIDTH * 0.5 - SEAT_TUCK + front
 	var feet_y := source.position.y
-	var copies: Array[Node3D] = [source, source.duplicate() as Node3D, source.duplicate() as Node3D]
 	var angles: Array[float] = [180.0, 250.0, 110.0]
+	if play_mode:
+		angles.append(0.0)
+	var copies: Array[Node3D] = [source]
+	while copies.size() < angles.size():
+		copies.append(source.duplicate() as Node3D)
 	for index in copies.size():
 		var model: Node3D = copies[index]
 		if model.get_parent() == null:
@@ -103,7 +154,10 @@ func _place_chairs(source: Node3D) -> Array[Node3D]:
 
 
 func _seat_cast(chairs: Array[Node3D]) -> void:
-	for spec in CAST:
+	var specs: Array = CAST.duplicate()
+	if play_mode:
+		specs.append(PLAYER)
+	for spec in specs:
 		var chair := _chair_nearest(chairs, float(spec["angle"]))
 		if chair == null:
 			continue
@@ -111,7 +165,7 @@ func _seat_cast(chairs: Array[Node3D]) -> void:
 		if packed == null:
 			continue
 		var actor := packed.instantiate() as Node3D
-		actor.set_script(load("res://scripts/seat_actor.gd"))
+		actor.set_script(SeatActor)
 		add_child(actor)
 		var forward := chair.global_transform.basis.z
 		forward.y = 0.0
@@ -119,7 +173,10 @@ func _seat_cast(chairs: Array[Node3D]) -> void:
 			forward = forward.normalized()
 		actor.rotation = chair.rotation
 		actor.position = chair.position - forward * 0.06
-		actor.call("setup", str(spec["name"]), str(spec["style"]), TABLE_WIDTH * 0.5, FELT_Y + 0.05)
+		actor.set("driven", play_mode)
+		actor.call("setup", str(spec["name"]), str(spec["style"]), _table_info())
+		if play_mode:
+			_actors[int(spec["id"])] = actor
 
 
 func _chair_nearest(chairs: Array[Node3D], degrees: float) -> Node3D:
@@ -144,6 +201,13 @@ func _fit_xz(model: Node3D, width: float) -> void:
 		return
 	var s := width / span
 	model.scale = Vector3(s, s, s)
+
+
+func _fit_floor_height(model: Node3D, height: float) -> void:
+	var box := _world_aabb(model)
+	if box.size.y < 0.001:
+		return
+	model.scale.y *= height / box.size.y
 
 
 func _fit_height(model: Node3D, height: float) -> void:
@@ -213,6 +277,47 @@ func _matte(root: Node3D) -> void:
 			mat.metallic = 0.0
 			mat.roughness = 0.82
 			mesh.set_surface_override_material(surface, mat)
+
+
+func sync_match(game: Match, in_match: bool, delta: float) -> void:
+	if _table != null:
+		_table.sync(game, in_match, delta)
+
+
+func pick_card(point: Vector2) -> int:
+	if _table == null:
+		return -1
+	return _table.pick(point)
+
+
+func select_card(index: int) -> void:
+	if _table != null:
+		_table.select(index)
+
+
+func fan_count(player_id: int) -> int:
+	if _table == null:
+		return 0
+	return _table.fan_count(player_id)
+
+
+func busy() -> bool:
+	return _table != null and _table.busy()
+
+
+func seat_caption(player_id: int) -> String:
+	return str(SEAT_NAME.get(player_id, ""))
+
+
+func seat_screen_pos(player_id: int) -> Vector2:
+	if not _actors.has(player_id) or player_id == 0:
+		return Vector2(-1, -1)
+	var actor := _actors[player_id] as Node3D
+	var point: Vector3 = actor.head_point() + Vector3.UP * 0.34
+	var camera := $Camera3D as Camera3D
+	if camera.is_position_behind(point):
+		return Vector2(-1, -1)
+	return camera.unproject_position(point)
 
 
 func _world_aabb(root: Node3D) -> AABB:
