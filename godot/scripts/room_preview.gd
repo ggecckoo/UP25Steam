@@ -19,10 +19,24 @@ const CAST := [
 const PLAYER := {"id": 0, "name": "kok", "angle": 0.0, "style": "player"}
 const SEAT_NAME := {1: "Sis", 2: "Kaya", 3: "Karaca"}
 const SEAT_TUCK := 0.04
+const _FEEL_PATH := "res://data/feel.tres"
 
 var play_mode := false
 var _actors: Dictionary = {}
 var _table: Node3D
+var _feel_data: Resource
+var _clock := 0.0
+var _cam_rest := Transform3D.IDENTITY
+var _cam_live := false
+var _aim_yaw := 0.0
+var _aim_pitch := 0.0
+var _look_yaw := 0.0
+var _look_pitch := 0.0
+var _yaw_vel := 0.0
+var _pitch_vel := 0.0
+var _inspect := 0.0
+var _inspect_goal := 0.0
+var _reveal := 0.0
 
 
 func _ready() -> void:
@@ -44,13 +58,17 @@ func _ready() -> void:
 		lamp.position.y += SHADE_BOTTOM - lamp_box.position.y
 	_cover_felt()
 	var camera := $Camera3D as Camera3D
+	var feel := _feel()
+	_grade(feel)
 	if play_mode and _actors.has(0):
 		var me: Node3D = _actors[0]
 		var eye: Vector3 = me.eye_point()
-		camera.global_position = eye + Vector3(0.0, 0.02, 0.0)
-		camera.fov = 56.0
-		camera.near = 0.06
+		camera.global_position = eye + Vector3(0.0, float(feel.eye_lift), 0.0)
+		camera.fov = float(feel.camera_fov)
+		camera.near = float(feel.camera_near)
 		camera.look_at(Vector3(0.0, FELT_TOP + 0.2, 0.22))
+		_cam_rest = camera.global_transform
+		_cam_live = true
 		me.make_first_person(camera)
 	else:
 		var seat_z := TABLE_WIDTH * 0.5 + 0.48
@@ -72,6 +90,112 @@ func _ready() -> void:
 			dirs[id] = Vector3(at.x, 0.0, at.z).normalized()
 		_table.setup(_actors, dirs, camera, FELT_TOP)
 		_table.sound.connect(func(kind: String): card_sound.emit(kind))
+
+
+func add_look(relative: Vector2) -> void:
+	if not _cam_live:
+		return
+	var feel := _feel()
+	if not bool(feel.look_enabled):
+		return
+	var sens := float(feel.look_sensitivity)
+	_aim_yaw = clampf(_aim_yaw - relative.x * sens, -float(feel.look_yaw_limit), float(feel.look_yaw_limit))
+	_aim_pitch = clampf(_aim_pitch - relative.y * sens, float(feel.look_pitch_min), float(feel.look_pitch_max))
+
+
+func recenter_look() -> void:
+	_aim_yaw = 0.0
+	_aim_pitch = 0.0
+
+
+func set_inspect(on: bool) -> void:
+	_inspect_goal = 1.0 if on else 0.0
+	if _actors.has(0):
+		_actors[0].inspecting = on
+
+
+func set_reveal(amount: float) -> void:
+	_reveal = clampf(amount, 0.0, 1.0)
+
+
+func camera_debug() -> String:
+	var gap := 0.0
+	if _actors.has(1) and _actors[1].has_method("_gaps"):
+		var gaps: Vector3 = _actors[1].call("_gaps", "Right")
+		gap = gaps.x
+	return "yaw %.0f  pitch %.0f  inspect %.2f  paw %.3f" % [
+		rad_to_deg(_look_yaw), rad_to_deg(_look_pitch), _inspect, gap,
+	]
+
+
+func _process(delta: float) -> void:
+	if not _cam_live:
+		return
+	var step := minf(delta, 0.05)
+	_clock += delta
+	var feel := _feel()
+	var yaw_state := _spring(_look_yaw, _yaw_vel, _aim_yaw, float(feel.look_omega), step)
+	var pitch_state := _spring(_look_pitch, _pitch_vel, _aim_pitch, float(feel.look_omega), step)
+	_look_yaw = yaw_state.x
+	_yaw_vel = yaw_state.y
+	_look_pitch = pitch_state.x
+	_pitch_vel = pitch_state.y
+	_inspect = lerpf(_inspect, _inspect_goal, 1.0 - exp(-6.0 * step))
+	var breath := 0.0
+	var sway := 0.0
+	var lean := 0.0
+	if bool(feel.sway_enabled):
+		breath = sin(_clock * TAU * float(feel.breath_hz)) * float(feel.breath_meters)
+		sway = sin(_clock * 0.37) * float(feel.sway_meters)
+		lean = sin(_clock * 0.53 + 1.2) * float(feel.sway_radians)
+	var pitch := _look_pitch + float(feel.inspect_pitch) * _inspect + float(feel.reveal_pitch) * _reveal
+	var basis := Basis(Vector3.UP, _look_yaw + lean) * _cam_rest.basis * Basis(Vector3.RIGHT, pitch + lean * 0.65)
+	var shift := _cam_rest.basis * Vector3(0.0, -0.02 * _reveal, -float(feel.reveal_dolly) * _reveal)
+	var camera := $Camera3D as Camera3D
+	camera.global_transform = Transform3D(basis, _cam_rest.origin + Vector3(sway, breath, sway * 0.35) + shift)
+	if _actors.has(0):
+		_actors[0].set_look_yaw(_look_yaw * float(feel.body_follow))
+
+
+func _spring(current: float, velocity: float, target: float, omega: float, delta: float) -> Vector2:
+	var accel := omega * omega * (target - current) - 2.0 * omega * velocity
+	velocity += accel * delta
+	current += velocity * delta
+	return Vector2(current, velocity)
+
+
+func _feel() -> Resource:
+	if _feel_data == null:
+		_feel_data = load(_FEEL_PATH) as Resource
+		if _feel_data == null:
+			_feel_data = preload("res://scripts/feel_config.gd").new()
+	return _feel_data
+
+
+func _grade(feel: Resource) -> void:
+	var world := $WorldEnvironment as WorldEnvironment
+	var env := world.environment
+	if env == null:
+		return
+	env = env.duplicate()
+	world.environment = env
+	env.ambient_light_color = feel.ambient_color
+	env.ambient_light_energy = float(feel.ambient_energy)
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.0
+	env.glow_enabled = true
+	env.glow_intensity = float(feel.glow_strength)
+	env.glow_bloom = 0.1
+	env.glow_hdr_threshold = 1.05
+	env.adjustment_enabled = true
+	env.adjustment_contrast = float(feel.contrast)
+	env.adjustment_saturation = float(feel.saturation)
+	var spot := $SpotLight3D as SpotLight3D
+	spot.light_color = feel.lamp_color
+	spot.light_energy = float(feel.lamp_energy)
+	spot.spot_angle = float(feel.lamp_angle)
+	var fill := $Fill as DirectionalLight3D
+	fill.light_energy = float(feel.fill_energy)
 
 
 func _table_info() -> Dictionary:

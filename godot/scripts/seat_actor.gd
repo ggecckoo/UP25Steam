@@ -14,11 +14,13 @@ const CARD := Vector2(0.096, 0.134)
 const THROW_KEYS := [0.28, 0.46, 0.78, 1.02, 1.36]
 const TAKE_KEYS := [0.36, 0.76, 1.04]
 const CLEAR := 0.016
+const _FEEL_PATH := "res://data/feel.tres"
 
 var first_person := false
 var driven := false
 var thinking := false
 var watching := false
+var inspecting := false
 var look_point := Vector3.ZERO
 var selected: Node3D = null
 var fan: Array = []
@@ -43,6 +45,8 @@ var _felt_top := 0.713
 var _wood_top := 0.70
 var _yaw := 0.0
 var _pitch := 0.0
+var _head_yaw := 0.0
+var _torso_yaw := 0.0
 var _lean := 0.0
 var _lean_goal := 0.0
 var _raise := 0.0
@@ -61,6 +65,7 @@ var _use_player_yaw := false
 var _lift: Dictionary = {}
 var _gather := 0.0
 var _present := 0.0
+var _feel_data: Resource
 
 
 func setup(preset: String, style: String, table: Dictionary) -> void:
@@ -93,7 +98,7 @@ func setup(preset: String, style: String, table: Dictionary) -> void:
 
 func set_look_yaw(yaw: float) -> void:
 	_use_player_yaw = true
-	_player_yaw = clampf(yaw, -1.2, 1.2)
+	_player_yaw = clampf(yaw, -1.92, 1.92)
 
 
 func make_first_person(cam: Camera3D) -> void:
@@ -194,6 +199,7 @@ func add_to_fan(card: Node3D, index := -1) -> void:
 func remove_from_fan(card: Node3D) -> void:
 	fan.erase(card)
 	_fan_local.erase(card)
+	_warm_card(card, false)
 	if selected == card:
 		selected = null
 
@@ -273,18 +279,25 @@ func _pose_body(delta: float) -> void:
 	var aim := _look_angles(look_point)
 	if _use_player_yaw:
 		aim.x = _player_yaw
-	var k := _rate(5.0, delta)
-	_yaw = lerpf(_yaw, aim.x, k)
-	_pitch = lerpf(_pitch, aim.y, k)
+	var feel := _feel()
+	var head_k := 1.0 - exp(-delta / maxf(float(feel.head_lag), 0.02))
+	var torso_k := 1.0 - exp(-delta / maxf(float(feel.torso_lag), 0.02))
+	_head_yaw = lerpf(_head_yaw, aim.x, head_k)
+	_pitch = lerpf(_pitch, aim.y, head_k)
+	_yaw = _head_yaw
 	_lean = lerpf(_lean, _lean_goal, _rate(4.0, delta))
 	var breath := 0.0 if first_person else sin(_time * 1.35 + _phase()) * 0.025
-	var torso := 0.0 if first_person else clampf(_yaw * 0.4, -0.4, 0.4)
+	var shares := _look_shares()
+	var torso_target := _head_yaw if first_person else _head_yaw * shares.x
+	_torso_yaw = lerpf(_torso_yaw, torso_target, torso_k)
+	var torso := clampf(_torso_yaw, -0.28, 0.28) if first_person else clampf(_torso_yaw, -0.35, 0.35)
 	_set_extra("Spine01", breath * 0.45 + _lean * 0.10, torso * 0.45)
 	_set_extra("Spine02", breath + _lean * 0.17, torso * 0.55)
 	if not first_person:
-		var rest_yaw := _yaw - torso
-		_set_extra("neck", -_pitch * 0.35, rest_yaw * 0.4)
-		_set_extra("Head", -_pitch * 0.65 + sin(_time * 0.7 + _phase()) * 0.02, rest_yaw * 0.6 + sin(_time * 0.42 + _phase()) * 0.03)
+		var rest_yaw := _head_yaw - torso
+		var upper := maxf(shares.y + shares.z, 0.001)
+		_set_extra("neck", -_pitch * 0.35, rest_yaw * (shares.y / upper))
+		_set_extra("Head", -_pitch * 0.65 + sin(_time * 0.7 + _phase()) * 0.02, rest_yaw * (shares.z / upper) + sin(_time * 0.42 + _phase()) * 0.03)
 	_skel.force_update_all_bone_transforms()
 	_head = _bone_world("Head")
 
@@ -478,8 +491,8 @@ func _rest_goal(side: String, frame: Dictionary) -> Dictionary:
 	var limit := _felt_radius - 0.1
 	if hand_xz.length() > limit:
 		hand_xz = hand_xz.normalized() * limit
-	var p := Vector3(hand_xz.x, _felt_top + CLEAR + 0.012, hand_xz.y)
-	var along := (f * 0.94 + Vector3.DOWN * 0.1).normalized()
+	var p := Vector3(hand_xz.x, _felt_top + _clear() + 0.012, hand_xz.y)
+	var along := (f * 0.96 + Vector3.UP * float(_feel().finger_lift)).normalized()
 	var pole := (l * (0.82 * sign) + Vector3.DOWN * 0.2).normalized()
 	return {"p": p, "len": along, "palm": Vector3.DOWN, "pole": pole, "contact": false, "plant": true}
 
@@ -493,7 +506,7 @@ func _fp_hand_rest(sign: float) -> Dictionary:
 	var ahead := _flat(-cam.basis.z)
 	var right := _flat(cam.basis.x)
 	var p := cam.origin + right * (0.42 * sign) + ahead * 0.86 + Vector3.DOWN * 0.6
-	p.y = _felt_top + CLEAR + 0.02
+	p.y = _felt_top + _clear() + 0.02
 	return {
 		"p": p,
 		"len": (Vector3.DOWN * 0.88 + ahead * 0.28).normalized(),
@@ -575,15 +588,15 @@ func _release_goal(frame: Dictionary) -> Dictionary:
 	flat.y = 0.0
 	var dir: Vector3 = flat.normalized() if flat.length() > 0.01 else frame["f"]
 	var p := aim - dir * (_paw_reach("Right") + CARD.y * 0.2)
-	p.y = _felt_top + CLEAR + 0.01
+	p.y = _felt_top + _clear() + 0.01
 	var pole := (-Vector3(frame["l"]) * 0.75 + Vector3.DOWN * 0.25).normalized()
-	return {"p": p, "len": (dir * 0.9 + Vector3.DOWN * 0.15).normalized(), "palm": Vector3.DOWN, "pole": pole, "plant": true}
+	return {"p": p, "len": (dir * 0.92 + Vector3.UP * float(_feel().finger_lift)).normalized(), "palm": Vector3.DOWN, "pole": pole, "plant": true}
 
 
 func _follow_goal(frame: Dictionary) -> Dictionary:
 	var goal := _release_goal(frame)
 	var p: Vector3 = goal["p"]
-	p.y = maxf(_felt_top + CLEAR, p.y - 0.006)
+	p.y = maxf(_felt_top + _clear(), p.y - 0.006)
 	goal["p"] = p
 	return goal
 
@@ -634,7 +647,7 @@ func _pose_arms(delta: float) -> void:
 			gather_goal = 1.0
 	_gather = lerpf(_gather, gather_goal, _rate(9.0, delta))
 	if first_person:
-		var present_goal := 1.0 if thinking else 0.0
+		var present_goal := 1.0 if thinking or inspecting else 0.0
 		_present = lerpf(_present, present_goal, _rate(4.5, delta))
 	var frame := _frame()
 	var left := _fan_goal(frame) if not fan.is_empty() else _rest_goal("Left", frame)
@@ -659,34 +672,95 @@ func _solve(side: String, goal: Dictionary, delta: float) -> void:
 	if not bool(goal.get("plant", false)):
 		wrist = Vector3(goal["p"]) - world_basis * (Vector3(paw["center"]) * _unit)
 	var pole: Vector3 = goal["pole"]
-	if first_person or bool(goal.get("plant", false)):
-		var planted := bool(goal.get("plant", false))
-		var budget := 0.06 if planted else 0.04
-		var raised := 0.0
-		for _step in 4:
-			_reach(side, wrist, pole)
-			_orient(side, world_basis)
-			var gaps := _gaps(side)
-			if planted and gaps.y < CLEAR:
-				pole = (pole + Vector3.UP * clampf((CLEAR - gaps.y) * 4.0, 0.15, 0.8)).normalized()
-			var low := gaps.x
-			if low >= CLEAR or raised >= budget:
-				continue
-			var step := clampf(CLEAR - low + 0.004, 0.0, budget - raised)
-			wrist.y += step
-			raised += step
-		_reach(side, wrist, pole)
-		_orient(side, world_basis)
+	if bool(goal.get("plant", false)):
+		_seat_on_table(side, wrist, pole, world_basis)
+		return
+	if first_person:
+		_lift_paw(side, wrist, pole, world_basis, float(_feel().plant_lift) * 0.6)
 		return
 	for i in 12:
 		_reach(side, wrist, pole)
 		_orient(side, world_basis)
 		var gaps := _gaps(side)
 		var low := minf(gaps.x, gaps.y)
-		if low >= CLEAR:
+		if low >= _clear():
 			break
-		wrist.y += clampf(CLEAR - low, 0.003, 0.02)
+		wrist.y += clampf(_clear() - low, 0.003, 0.02)
 	_lift[side] = 0.0
+
+
+func _feel() -> Resource:
+	if _feel_data == null:
+		_feel_data = load(_FEEL_PATH) as Resource
+		if _feel_data == null:
+			_feel_data = preload("res://scripts/feel_config.gd").new()
+	return _feel_data
+
+
+func _clear() -> float:
+	return float(_feel().table_clearance)
+
+
+func _look_shares() -> Vector3:
+	var feel := _feel()
+	var spine := maxf(float(feel.look_spine), 0.0)
+	var neck := maxf(float(feel.look_neck), 0.0)
+	var head := maxf(float(feel.look_head), 0.0)
+	var total := maxf(spine + neck + head, 0.001)
+	return Vector3(spine / total, neck / total, head / total)
+
+
+func _lift_paw(side: String, wrist: Vector3, pole: Vector3, world_basis: Basis, budget: float) -> Vector3:
+	var raised := 0.0
+	for _step in 3:
+		_reach(side, wrist, pole)
+		_orient(side, world_basis)
+		var low := _gaps(side).x
+		if low >= _clear() or raised >= budget:
+			break
+		var step := clampf(_clear() - low + 0.003, 0.0, budget - raised)
+		wrist.y += step
+		raised += step
+	_reach(side, wrist, pole)
+	_orient(side, world_basis)
+	return wrist
+
+
+func _seat_on_table(side: String, wrist: Vector3, pole: Vector3, world_basis: Basis) -> void:
+	# Paw vertices decide the wrist height. Sleeve vertices far from the
+	# bone used to drag the whole hand into the air, so they are ignored.
+	wrist = _lift_paw(side, wrist, pole, world_basis, float(_feel().plant_lift))
+	var shoulder := _bone_world(side + "Arm")
+	var slid := 0.0
+	var limit := float(_feel().arm_slide)
+	for _slide in 2:
+		var low := _bone_clearance(side, float(_feel().arm_skin))
+		if low >= _clear() or slid >= limit:
+			break
+		var away := Vector3(shoulder.x - wrist.x, 0.0, shoulder.z - wrist.z)
+		var pull := clampf(_clear() - low, 0.0, limit - slid)
+		if away.length() > 0.05:
+			wrist += away.normalized() * pull
+		else:
+			wrist.y += pull
+		slid += pull
+		_reach(side, wrist, pole)
+		_orient(side, world_basis)
+	_reach(side, wrist, pole)
+	_orient(side, world_basis)
+
+
+func _bone_clearance(side: String, skin: float) -> float:
+	var elbow := _bone_world(side + "ForeArm")
+	var hand := _bone_world(side + "Hand")
+	var low := INF
+	for k in 5:
+		var at: Vector3 = elbow.lerp(hand, float(k) / 4.0) + Vector3.DOWN * skin
+		var radius := Vector2(at.x - _center.x, at.z - _center.z).length()
+		if radius > _felt_radius:
+			continue
+		low = minf(low, at.y - _felt_top)
+	return low
 
 
 func _reach(side: String, wrist: Vector3, pole: Vector3) -> void:
@@ -830,6 +904,26 @@ func _scale_bone(idx: int, amount: float) -> void:
 		_scale_bone(int(child), amount)
 
 
+func _warm_card(card: Node3D, on: bool) -> void:
+	var mesh := card as MeshInstance3D
+	if mesh == null:
+		return
+	var marked := mesh.get_surface_override_material(0) != null
+	if on == marked:
+		return
+	if not on:
+		mesh.set_surface_override_material(0, null)
+		return
+	var source := mesh.get_active_material(0) as StandardMaterial3D
+	if source == null:
+		return
+	var mat := source.duplicate() as StandardMaterial3D
+	mat.emission_enabled = true
+	mat.emission = Color(0.86, 0.64, 0.3)
+	mat.emission_energy_multiplier = 0.25
+	mesh.set_surface_override_material(0, mat)
+
+
 func _layout_fan(delta: float) -> void:
 	var count := fan.size()
 	if count == 0:
@@ -841,7 +935,9 @@ func _layout_fan(delta: float) -> void:
 	for i in count:
 		var card: Node3D = fan[i]
 		var u := 0.5 if count == 1 else float(i) / float(count - 1)
-		var lift := 0.034 if card == selected else 0.0
+		var lift := 0.018 if card == selected else 0.0
+		if first_person:
+			_warm_card(card, card == selected)
 		var stack := 0.0016 * float(i)
 		var goal: Transform3D
 		if first_person:

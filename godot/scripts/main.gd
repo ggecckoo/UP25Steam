@@ -32,6 +32,9 @@ var world: Node3D
 var hud: Control
 var port: SubViewport
 var _name_labels: Dictionary = {}
+var _look_held := false
+var _debug := false
+var _debug_label: Label
 
 
 func _ready() -> void:
@@ -73,6 +76,7 @@ func _process(delta: float) -> void:
 		last_sig = sig
 		_rebuild()
 	_track_names()
+	_track_debug()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -130,10 +134,27 @@ func _input_play(event: InputEvent) -> void:
 	var hand_size := 0
 	if not game.players.is_empty():
 		hand_size = game.players[0].hand.size()
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		_look_held = event.pressed
+		return
 	if event is InputEventMouseMotion:
+		if _look_held and world != null and world.has_method("add_look"):
+			world.call("add_look", event.relative)
+			return
 		var hovered := _card_at(event.position)
 		if hovered >= 0:
 			card_index = hovered
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
+		_debug = not _debug
+		_track_debug()
+		return
+	if event is InputEventKey and event.keycode == KEY_C and world != null and world.has_method("set_inspect"):
+		world.call("set_inspect", event.pressed)
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+		if world != null and world.has_method("recenter_look"):
+			world.call("recenter_look")
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if game.phase == Match.PHASE_REVEAL:
@@ -161,6 +182,34 @@ func _input_play(event: InputEvent) -> void:
 			card_index = digit
 			_play(digit)
 			_refresh()
+
+
+func _track_debug() -> void:
+	if _debug_label == null:
+		_debug_label = Label.new()
+		_debug_label.name = "DebugReadout"
+		_debug_label.position = Vector2(16, 78)
+		_debug_label.add_theme_color_override("font_color", Color(0.96, 0.91, 0.78))
+		_debug_label.add_theme_font_size_override("font_size", 14)
+		add_child(_debug_label)
+	_debug_label.visible = _debug and screen == SCREEN_PLAY
+	if not _debug_label.visible or world == null:
+		return
+	var cam := ""
+	if world.has_method("camera_debug"):
+		cam = str(world.call("camera_debug"))
+	var phase := "menu"
+	match game.phase:
+		Match.PHASE_PLAYING:
+			phase = "play"
+		Match.PHASE_REVEAL:
+			phase = "reveal"
+		Match.PHASE_OVER:
+			phase = "over"
+	var busy := world.has_method("busy") and bool(world.call("busy"))
+	_debug_label.text = "phase %s  seat %d  busy %s\n%s\nRMB look   C cards   R center" % [
+		phase, game.acting(), busy, cam,
+	]
 
 
 func _card_at(point: Vector2) -> int:

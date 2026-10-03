@@ -33,6 +33,8 @@ var _peeks: Dictionary = {}
 var _clock := 0.0
 var _lean := 0.0
 var _selected := -1
+var _turn_mark: MeshInstance3D
+var _turn_angle := 0.0
 var _rng := RandomNumberGenerator.new()
 
 
@@ -48,6 +50,8 @@ func setup(actors: Dictionary, dirs: Dictionary, camera: Camera3D, felt_top: flo
 	_token = _make_token()
 	_token.visible = false
 	add_child(_token)
+	_turn_mark = _make_turn_mark()
+	add_child(_turn_mark)
 
 
 func sync(game: Match, in_match: bool, delta: float) -> void:
@@ -65,6 +69,8 @@ func sync(game: Match, in_match: bool, delta: float) -> void:
 			_actors[id].thinking = false
 			_actors[id].watching = false
 		_token.visible = false
+		if _turn_mark != null:
+			_turn_mark.visible = false
 		_lean_camera(false, delta)
 		return
 	for id in _actors:
@@ -78,6 +84,7 @@ func sync(game: Match, in_match: bool, delta: float) -> void:
 	_place_token(game, delta)
 	_select(game)
 	_attention(game)
+	_place_turn(game, delta)
 	_lean_camera(game.phase == Match.PHASE_REVEAL, delta)
 
 
@@ -508,10 +515,50 @@ func _place_token(game: Match, delta: float) -> void:
 	_token.rotation = Vector3(0.0, _token_angle, 0.0)
 
 
+func _place_turn(game: Match, delta: float) -> void:
+	if _turn_mark == null:
+		return
+	var seat := game.acting()
+	if seat < 0 or not _dirs.has(seat):
+		_turn_mark.visible = false
+		return
+	_turn_mark.visible = true
+	var dir: Vector3 = _dirs[seat]
+	var goal := atan2(dir.x, dir.z)
+	_turn_angle = lerp_angle(_turn_angle, goal, 1.0 - exp(-3.2 * delta))
+	var pulse := 0.86 + 0.14 * sin(_clock * TAU / 1.5)
+	var out := Vector3(sin(_turn_angle), 0.0, cos(_turn_angle))
+	_turn_mark.global_position = out * 0.62 + Vector3(0.0, _felt + 0.008, 0.0)
+	_turn_mark.rotation = Vector3(0.0, _turn_angle, 0.0)
+	_turn_mark.scale = Vector3(pulse, 1.0, 1.0)
+
+
+func _make_turn_mark() -> MeshInstance3D:
+	var mark := MeshInstance3D.new()
+	mark.name = "TurnMark"
+	var box := BoxMesh.new()
+	box.size = Vector3(0.12, 0.006, 0.03)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.93, 0.84, 0.55)
+	mat.emission_enabled = true
+	mat.emission = Color(0.72, 0.48, 0.16)
+	mat.emission_energy_multiplier = 0.4
+	mat.roughness = 0.42
+	mat.metallic = 0.15
+	box.material = mat
+	mark.mesh = box
+	mark.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mark
+
+
 func _lean_camera(lean: bool, delta: float) -> void:
+	_lean = lerpf(_lean, 1.0 if lean else 0.0, 1.0 - exp(-2.5 * delta))
+	var room := get_parent()
+	if room != null and room.has_method("set_reveal"):
+		room.call("set_reveal", _lean)
+		return
 	if _camera == null:
 		return
-	_lean = lerpf(_lean, 1.0 if lean else 0.0, 1.0 - exp(-2.5 * delta))
 	var xf := _camera_home
 	xf.origin += xf.basis * (Vector3(0.0, -0.02, -0.06) * _lean)
 	xf.basis = xf.basis * Basis(Vector3.RIGHT, -0.07 * _lean)
