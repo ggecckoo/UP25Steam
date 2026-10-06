@@ -19,17 +19,17 @@ func _init() -> void:
 	var ace := Match.Card.new()
 	ace.rank = 0
 	ace.suit = 1
-	if Match.hand_value([king, ace]) != 11:
+	if Match.hand_value([king, ace]) != 21:
 		_fail("hand value")
 	if ace.red() != true or king.red():
 		_fail("color")
-	if Match.outcome_for(40) != Match.OUTCOME_CAP or Match.outcome_for(26) != Match.OUTCOME_OVER:
+	if Match.outcome_for(80) != Match.OUTCOME_CAP or Match.outcome_for(31) != Match.OUTCOME_OVER:
 		_fail("high outcome")
-	if Match.outcome_for(25) != Match.OUTCOME_EXACT or Match.outcome_for(24) != Match.OUTCOME_UNDER:
+	if Match.outcome_for(30) != Match.OUTCOME_EXACT or Match.outcome_for(29) != Match.OUTCOME_UNDER:
 		_fail("low outcome")
 	if Match.draws(Match.OUTCOME_OVER, 2) != [0, 0, 0, 0]:
 		_fail("over draws")
-	if Match.draws(Match.OUTCOME_UNDER, 2) != [0, 0, 2, 0]:
+	if Match.draws(Match.OUTCOME_UNDER, 2) != [0, 0, 1, 0]:
 		_fail("under draws")
 	if Match.draws(Match.OUTCOME_EXACT, 2) != [1, 1, 0, 1]:
 		_fail("exact draws")
@@ -47,7 +47,7 @@ func _init() -> void:
 	var hand := [low, high]
 	if Match.pick(rng, hand, true, 0, 3, 1).rank != 12:
 		_fail("holder pick")
-	if Match.pick(rng, hand, false, 25, 0, 1).rank != 12:
+	if Match.pick(rng, hand, false, 30, 0, 1).rank != 12:
 		_fail("forced high")
 	if Match.pick(rng, hand, false, 0, 0, 1).rank != 12:
 		_fail("free high")
@@ -59,12 +59,12 @@ func _init() -> void:
 	game.configure(text, save_path)
 	game._rng.seed = 9
 	game.new_game()
-	if game.count_cards() != 52:
+	if game.count_cards() != 28:
 		_fail("deal")
 	for _i in 200000:
 		if game.phase == Match.PHASE_OVER:
 			break
-		if game.count_cards() != 52:
+		if game.count_cards() != 28:
 			_fail("cards drifted")
 		if game.human_turn():
 			var index: int = game.players[0].hand.size() - 1 if game.holder == 0 else 0
@@ -89,11 +89,11 @@ func _init() -> void:
 	if other.table.is_empty():
 		_fail("no table card")
 	other.quit_match()
-	if other.phase != Match.PHASE_MENU or not other.can_resume() or other.count_cards() != 52:
+	if other.phase != Match.PHASE_MENU or not other.can_resume() or other.count_cards() != 28:
 		_fail("quit resume")
 	var loaded := Match.new()
 	loaded.configure(text, save_path)
-	if not loaded.can_resume() or loaded.count_cards() != 52:
+	if not loaded.can_resume() or loaded.count_cards() != 28:
 		_fail("reload")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 	print("OK")

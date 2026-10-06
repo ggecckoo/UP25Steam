@@ -6,12 +6,12 @@ import Foundation
 // MARK: - Kural sabitleri
 // Bu sayılar ölçülmüştür, keyfi değildir. Gerekçeleri tasarım dokümanında.
 enum Rules {
-    static let limit           = 25    // eşik: sıra sahibi bunu aşmak zorunda
-    static let cap             = 40    // 4×10: herkes en yüksek atarsa masa cezası
-    static let rounds          = 12    // 4'ün katı -> sıra sahipliği 3-3-3-3 dağılır
-    static let handSize        = 13    // 13 x 4 = 52, deste tam biter
+    static let limit           = 30    // eşik: sıra sahibi bunu aşmak zorunda
+    static let cap             = 80    // 4×20: dört King masayı cezalandırır
+    static let rounds          = 8     // 4'ün katı -> sıra sahipliği 2-2-2-2 dağılır
+    static let handSize        = 7     // 7 x 4 = 28, deste tam biter
     static let penaltyPerCard  = 4     // elde kalan her kart için ceza puanı
-    static let gaugeMax        = 40.0  // eşik göstergesinin üst sınırı
+    static let gaugeMax        = 80.0  // eşik göstergesinin üst sınırı
 
     // Tempo (saniye)
     static let aiDelay   = 1.15  // rakip hamleleri arası
@@ -43,11 +43,26 @@ enum Rank: String, CaseIterable {
         case .seven: return 7
         case .eight: return 8
         case .nine:  return 9
-        case .ten, .jack, .queen, .king: return 10
+        case .ten, .queen: return 10
+        case .jack: return 15
+        case .king: return 20
         }
     }
 
     var isCourt: Bool { self == .jack || self == .queen || self == .king }
+
+    var face: String {
+        switch self {
+        case .ace: return "A"
+        case .three: return "3"
+        case .five: return "5"
+        case .seven: return "7"
+        case .nine: return "9"
+        case .jack: return "J"
+        case .king: return "K"
+        default: return rawValue
+        }
+    }
 }
 
 // MARK: - Kart
@@ -61,8 +76,8 @@ struct Card: Identifiable, Equatable {
 
     static func shuffledDeck() -> [Card] {
         var deck: [Card] = []
-        for suit in Suit.allCases {
-            for rank in Rank.allCases {
+        for rank in [Rank.ace, .three, .five, .seven, .nine, .jack, .king] {
+            for suit in Suit.allCases {
                 deck.append(Card(rank: rank, suit: suit))
             }
         }
@@ -92,10 +107,10 @@ struct Played: Identifiable {
 
 // MARK: - Tur sonucu
 enum Outcome: Equatable {
-    case over        // 25 < toplam < 40  -> sıra sahibi kart çekmez
-    case exact       // toplam = 25       -> sıra sahibi hariç herkes 1 kart
-    case cap         // toplam = 40       -> sıra sahibi hariç herkes 1 kart (aynı ceza)
-    case under       // toplam < 25       -> sıra sahibi 2 kart çeker
+    case over        // 30 < toplam, 80 değil -> sıra sahibi kart çekmez
+    case exact       // toplam = 30       -> sıra sahibi hariç herkes 1 kart
+    case cap         // toplam = 80       -> sıra sahibi hariç herkes 1 kart
+    case under       // toplam < 30       -> sıra sahibi 1 kart çeker
 }
 
 // MARK: - Sonuç tablosu satırı
@@ -112,7 +127,7 @@ struct Standing: Identifiable {
 // Motor ve testler aynı kaynağı kullanır; kural tek yerde tanımlıdır.
 enum RoundRules {
     static func outcome(for total: Int) -> Outcome {
-        // 40 önce: aksi halde >25 dalı onu "over" sayardı.
+        // 80 önce: aksi halde >30 dalı onu "over" sayardı.
         if total == Rules.cap { return .cap }
         if total > Rules.limit { return .over }
         if total == Rules.limit { return .exact }
@@ -122,7 +137,7 @@ enum RoundRules {
     /// Hangi oyuncunun kaç kart çekeceğini döner.
     /// over  -> kimse çekmez, atılan kartlar yanar
     /// exact / cap -> sıra sahibi hariç herkes 1 kart
-    /// under -> sıra sahibi 2 kart
+    /// under -> sıra sahibi 1 kart
     static func draws(outcome: Outcome, holder: Int, order: [Int]) -> [Int: Int] {
         switch outcome {
         case .over:
@@ -132,7 +147,7 @@ enum RoundRules {
             for player in order where player != holder { plan[player] = 1 }
             return plan
         case .under:
-            return [holder: 2]
+            return [holder: 1]
         }
     }
 }
@@ -152,7 +167,7 @@ enum AI {
         if running + low.value + after * 1 > Rules.limit { return high }
 
         // En yükseğimi atsam bile eşik aşılmaz -> bedava, puanını düşür
-        if running + high.value + after * 10 <= Rules.limit { return high }
+        if running + high.value + after * Rank.king.value <= Rules.limit { return high }
 
         // Gerçek ikilem: tur ilerledikçe puan kaygısı ağırlaşır
         let dumpChance = 0.18 + Double(round) * 0.06

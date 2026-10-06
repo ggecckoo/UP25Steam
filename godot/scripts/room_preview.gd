@@ -57,6 +57,7 @@ func _ready() -> void:
 		var lamp_box := _world_aabb(lamp)
 		lamp.position.y += SHADE_BOTTOM - lamp_box.position.y
 	_cover_felt()
+	_dress_room()
 	var camera := $Camera3D as Camera3D
 	var feel := _feel()
 	_grade(feel)
@@ -196,6 +197,154 @@ func _grade(feel: Resource) -> void:
 	spot.spot_angle = float(feel.lamp_angle)
 	var fill := $Fill as DirectionalLight3D
 	fill.light_energy = float(feel.fill_energy)
+
+
+func _dress_room() -> void:
+	for node_name in ["Floor", "WallBack", "WallLeft", "WallRight"]:
+		var old := get_node_or_null(node_name)
+		if old:
+			old.visible = false
+	var parlor := Node3D.new()
+	parlor.name = "Parlor"
+	add_child(parlor)
+	var half := 4.2
+	var height := 2.95
+	_parlor_floor(parlor, half)
+	_parlor_shell(parlor, half, height)
+	_parlor_bar(parlor)
+	_parlor_sconce(parlor, Vector3(-1.45, 1.78, -3.78))
+	_parlor_sconce(parlor, Vector3(1.45, 1.78, -3.78))
+	_parlor_sconce(parlor, Vector3(-3.82, 1.7, 0.35))
+	_parlor_sconce(parlor, Vector3(3.82, 1.7, -0.55))
+	_parlor_frame(parlor, Vector3(-4.08, 1.58, -1.15), Vector3(1, 0, 0))
+	_parlor_frame(parlor, Vector3(4.08, 1.42, 1.05), Vector3(-1, 0, 0))
+	_parlor_door(parlor, half)
+
+
+func _parlor_floor(parlor: Node3D, half: float) -> void:
+	var tones := [
+		Color(0.28, 0.16, 0.08),
+		Color(0.24, 0.13, 0.07),
+		Color(0.31, 0.18, 0.09),
+		Color(0.22, 0.12, 0.06),
+	]
+	var boards := 14
+	var width := half * 2.0 / float(boards)
+	for i in boards:
+		var shade: Color = tones[i % tones.size()]
+		var z := -half + width * (float(i) + 0.5)
+		_solid(parlor, Vector3(half * 2.0, 0.08, width * 0.96), Vector3(0.0, -0.04, z), shade, 0.84)
+
+
+func _parlor_shell(parlor: Node3D, half: float, height: float) -> void:
+	var plaster := Color(0.42, 0.26, 0.16)
+	var wood := Color(0.2, 0.11, 0.06)
+	var beam := Color(0.14, 0.08, 0.045)
+	var thick := 0.16
+	var span := half * 2.0 + thick
+	_solid(parlor, Vector3(span, height, thick), Vector3(0.0, height * 0.5, -half), plaster, 0.9)
+	_solid(parlor, Vector3(span, height, thick), Vector3(0.0, height * 0.5, half), plaster, 0.9)
+	_solid(parlor, Vector3(thick, height, span), Vector3(-half, height * 0.5, 0.0), plaster, 0.9)
+	_solid(parlor, Vector3(thick, height, span), Vector3(half, height * 0.5, 0.0), plaster, 0.9)
+	var rail := 0.92
+	_solid(parlor, Vector3(span - 0.04, rail, 0.06), Vector3(0.0, rail * 0.5, -half + 0.1), wood, 0.72)
+	_solid(parlor, Vector3(span - 0.04, rail, 0.06), Vector3(0.0, rail * 0.5, half - 0.1), wood, 0.72)
+	_solid(parlor, Vector3(0.06, rail, span - 0.2), Vector3(-half + 0.1, rail * 0.5, 0.0), wood, 0.72)
+	_solid(parlor, Vector3(0.06, rail, span - 0.2), Vector3(half - 0.1, rail * 0.5, 0.0), wood, 0.72)
+	_solid(parlor, Vector3(span, 0.1, span), Vector3(0.0, height, 0.0), beam, 0.8)
+	for i in 4:
+		var x := -half * 0.72 + float(i) * half * 0.48
+		_solid(parlor, Vector3(0.12, 0.08, span - 0.3), Vector3(x, height - 0.08, 0.0), wood, 0.7)
+
+
+func _parlor_bar(parlor: Node3D) -> void:
+	var wood := Color(0.24, 0.13, 0.07)
+	var top := Color(0.34, 0.2, 0.1)
+	_solid(parlor, Vector3(3.4, 0.96, 0.48), Vector3(0.0, 0.48, -3.62), wood, 0.68)
+	_solid(parlor, Vector3(3.5, 0.06, 0.56), Vector3(0.0, 0.99, -3.6), top, 0.46)
+	var bottles := [
+		Color(0.42, 0.2, 0.08),
+		Color(0.12, 0.28, 0.16),
+		Color(0.18, 0.1, 0.08),
+		Color(0.55, 0.32, 0.12),
+		Color(0.1, 0.22, 0.18),
+	]
+	for i in bottles.size():
+		var x := -1.15 + float(i) * 0.55
+		_bottle(parlor, Vector3(x, 1.16, -3.62), bottles[i], 0.16 + float(i % 2) * 0.05)
+	_solid(parlor, Vector3(1.15, 0.72, 0.04), Vector3(0.0, 1.72, -4.02), Color(0.1, 0.07, 0.05), 0.4)
+	_solid(parlor, Vector3(1.02, 0.58, 0.02), Vector3(0.0, 1.72, -3.99), Color(0.16, 0.18, 0.2), 0.18)
+
+
+func _parlor_sconce(parlor: Node3D, at: Vector3) -> void:
+	_solid(parlor, Vector3(0.16, 0.28, 0.08), at, Color(0.45, 0.3, 0.14), 0.4)
+	var bulb := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.05
+	sphere.height = 0.1
+	var glass := StandardMaterial3D.new()
+	glass.albedo_color = Color(1.0, 0.78, 0.45)
+	glass.emission_enabled = true
+	glass.emission = Color(1.0, 0.62, 0.28)
+	glass.emission_energy_multiplier = 1.4
+	sphere.material = glass
+	bulb.mesh = sphere
+	bulb.position = at + Vector3(0.0, -0.08, 0.08)
+	parlor.add_child(bulb)
+	var light := OmniLight3D.new()
+	light.position = bulb.position
+	light.light_color = Color(1.0, 0.68, 0.38)
+	light.light_energy = 0.55
+	light.omni_range = 3.4
+	light.shadow_enabled = false
+	parlor.add_child(light)
+
+
+func _parlor_frame(parlor: Node3D, at: Vector3, inward: Vector3) -> void:
+	var wide := absf(inward.x) > 0.5
+	var frame_size := Vector3(0.05, 0.96, 0.78) if wide else Vector3(0.78, 0.96, 0.05)
+	var art_size := Vector3(0.02, 0.74, 0.6) if wide else Vector3(0.6, 0.74, 0.02)
+	_solid(parlor, frame_size, at, Color(0.32, 0.2, 0.1), 0.5)
+	_solid(parlor, art_size, at + inward * 0.025, Color(0.5, 0.3, 0.16), 0.88)
+
+
+func _parlor_door(parlor: Node3D, half: float) -> void:
+	var jamb := Color(0.22, 0.12, 0.06)
+	var door := Color(0.16, 0.09, 0.05)
+	var z := half - 0.08
+	_solid(parlor, Vector3(1.15, 2.15, 0.08), Vector3(0.0, 1.05, z), jamb, 0.7)
+	_solid(parlor, Vector3(0.92, 1.92, 0.06), Vector3(0.0, 0.98, z - 0.02), door, 0.62)
+
+
+func _bottle(parlor: Node3D, at: Vector3, color: Color, tall: float) -> void:
+	var node := MeshInstance3D.new()
+	var cylinder := CylinderMesh.new()
+	cylinder.top_radius = 0.035
+	cylinder.bottom_radius = 0.045
+	cylinder.height = tall
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.28
+	mat.metallic = 0.05
+	cylinder.material = mat
+	node.mesh = cylinder
+	node.position = at
+	parlor.add_child(node)
+
+
+func _solid(parlor: Node3D, size: Vector3, at: Vector3, color: Color, rough: float) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = rough
+	mat.metallic = 0.0
+	box.material = mat
+	node.mesh = box
+	node.position = at
+	parlor.add_child(node)
+	return node
 
 
 func _table_info() -> Dictionary:

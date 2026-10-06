@@ -134,8 +134,21 @@ func _input_play(event: InputEvent) -> void:
 	var hand_size := 0
 	if not game.players.is_empty():
 		hand_size = game.players[0].hand.size()
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
-		_look_held = event.pressed
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if not event.pressed:
+			_look_held = false
+			return
+		if game.phase == Match.PHASE_REVEAL:
+			game.skip_reveal()
+			_refresh()
+			return
+		var clicked := _card_at(event.position)
+		if clicked >= 0:
+			card_index = clicked
+			_play(clicked)
+			_refresh()
+			return
+		_look_held = true
 		return
 	if event is InputEventMouseMotion:
 		if _look_held and world != null and world.has_method("add_look"):
@@ -155,16 +168,6 @@ func _input_play(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
 		if world != null and world.has_method("recenter_look"):
 			world.call("recenter_look")
-		return
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if game.phase == Match.PHASE_REVEAL:
-			game.skip_reveal()
-		else:
-			var clicked := _card_at(event.position)
-			if clicked >= 0:
-				card_index = clicked
-				_play(clicked)
-		_refresh()
 		return
 	if event.is_action_pressed("ui_left") or event.is_action_pressed("ui_up"):
 		card_index = wrapi(card_index - 1, 0, maxi(hand_size, 1))
@@ -207,7 +210,7 @@ func _track_debug() -> void:
 		Match.PHASE_OVER:
 			phase = "over"
 	var busy := world.has_method("busy") and bool(world.call("busy"))
-	_debug_label.text = "phase %s  seat %d  busy %s\n%s\nRMB look   C cards   R center" % [
+	_debug_label.text = "phase %s  seat %d  busy %s\n%s\nDrag empty space   C cards   R center" % [
 		phase, game.acting(), busy, cam,
 	]
 

@@ -1,4 +1,4 @@
-# Terms of Service — 25-40
+# Terms of Service — 30-80
 
 **Last updated: September 22, 2026**
 
@@ -8,14 +8,14 @@
 
 ---
 
-These Terms govern your use of the 25-40 game application (the "App"), published
+These Terms govern your use of the 30-80 game application (the "App"), published
 by Atiko Labs ("we", "us", "our") for Apple devices and, through Steam, for
 macOS, Windows, and Steam Deck. By downloading or using the App you agree to
 them. If you do not agree, do not use the App.
 
 ## 1. What the App is
 
-25-40 is a single-player card game played against computer opponents, provided
+30-80 is a single-player card game played against computer opponents, provided
 for entertainment. It involves no wagering, no real-money play, no virtual
 currency, and no prizes of any kind.
 

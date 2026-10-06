@@ -541,9 +541,9 @@ func worse(a, b Standing) bool {
 }
 
 func (e *Engine) newDeck() []Card {
-	deck := make([]Card, 0, 52)
-	for suit := Suit(0); suit < 4; suit++ {
-		for rank := Rank(0); rank < 13; rank++ {
+	deck := make([]Card, 0, DeckSize)
+	for _, rank := range DeckFaces {
+		for suit := Suit(0); suit < 4; suit++ {
 			deck = append(deck, e.mint(rank, suit))
 		}
 	}

@@ -1,4 +1,4 @@
-# Apple App Store — 25-40 ret önleme kontrol listesi
+# Apple App Store — 30-80 ret önleme kontrol listesi
 
 > Amaç: App Store'a göndermeden önce bilinen ret sebeplerini kapatmak.
 > Bu liste UP25'in **gerçek** durumuna göre yazıldı (kod okunarak), genel bir

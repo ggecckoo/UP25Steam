@@ -289,14 +289,14 @@ final class GameEngine: ObservableObject {
         let r1Targets = [
             CardRef(rank: .king, suit: .spade),
             CardRef(rank: .nine, suit: .heart),
-            CardRef(rank: .eight, suit: .diamond),
-            CardRef(rank: .seven, suit: .club),
+            CardRef(rank: .seven, suit: .diamond),
+            CardRef(rank: .five, suit: .club),
         ]
         let r2Targets = [
-            CardRef(rank: .two, suit: .spade),
+            CardRef(rank: .ace, suit: .spade),
             CardRef(rank: .three, suit: .heart),
-            CardRef(rank: .four, suit: .diamond),
-            CardRef(rank: .five, suit: .club),
+            CardRef(rank: .ace, suit: .diamond),
+            CardRef(rank: .three, suit: .club),
         ]
 
         let reserved = Set((r1Targets + r2Targets).map { "\($0.rank.rawValue)\($0.suit.rawValue)" })
@@ -315,13 +315,13 @@ final class GameEngine: ObservableObject {
             Player(id: 0, name: "Sen", isHuman: true,
                    hand: hand(script: [r1Targets[0], r2Targets[3]], fillFrom: 0)),
             Player(id: 1, name: "Kemal", isHuman: false,
-                   hand: hand(script: [r1Targets[1], r2Targets[0]], fillFrom: 11)),
+                   hand: hand(script: [r1Targets[1], r2Targets[0]], fillFrom: 5)),
             Player(id: 2, name: "Nur", isHuman: false,
-                   hand: hand(script: [r1Targets[2], r2Targets[1]], fillFrom: 22)),
+                   hand: hand(script: [r1Targets[2], r2Targets[1]], fillFrom: 10)),
             Player(id: 3, name: "Sabri", isHuman: false,
-                   hand: hand(script: [r1Targets[3], r2Targets[2]], fillFrom: 33)),
+                   hand: hand(script: [r1Targets[3], r2Targets[2]], fillFrom: 15)),
         ]
-        middle = Array(filler[44...])
+        middle = Array(filler[20...])
     }
 
     func beginDemoPlay() {
@@ -371,8 +371,8 @@ final class GameEngine: ObservableObject {
             script: [
                 .init(rank: .king, suit: .spade),
                 .init(rank: .nine, suit: .heart),
-                .init(rank: .eight, suit: .diamond),
-                .init(rank: .seven, suit: .club),
+                .init(rank: .seven, suit: .diamond),
+                .init(rank: .five, suit: .club),
             ],
             humanHint: .demoTapHigh
         )
@@ -390,10 +390,10 @@ final class GameEngine: ObservableObject {
 
         await playDemoRound(
             script: [
-                .init(rank: .two, suit: .spade),
+                .init(rank: .ace, suit: .spade),
                 .init(rank: .three, suit: .heart),
-                .init(rank: .four, suit: .diamond),
-                .init(rank: .five, suit: .club),
+                .init(rank: .ace, suit: .diamond),
+                .init(rank: .three, suit: .club),
             ],
             humanHint: .demoTapLow
         )

@@ -206,7 +206,7 @@ class Painter extends Control:
 		var mid := inner.get_center()
 		draw_circle(mid, 33.0, BACK.darkened(0.25))
 		draw_arc(mid, 33.0, 0.0, TAU, 64, BRASS, 3.0, true)
-		_text(mid, "25", 34, BRASS)
+		_text(mid, "30", 34, BRASS)
 
 	func _lozenge(c: Vector2, r: float, color: Color) -> void:
 		var pts := PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.75, 0), c + Vector2(0, r), c + Vector2(-r * 0.75, 0), c + Vector2(0, -r)])

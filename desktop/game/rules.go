@@ -3,10 +3,11 @@ package game
 import "math/rand/v2"
 
 const (
-	Limit          = 25
-	Cap            = 40
-	Rounds         = 12
-	HandSize       = 13
+	Limit          = 30
+	Cap            = 80
+	Rounds         = 8
+	HandSize       = 7
+	DeckSize       = 28
 	PenaltyPerCard = 4
 	AIDelay        = 1.15
 	SumDelay       = 1.70
@@ -76,6 +77,10 @@ func (r Rank) Value() int {
 		return 8
 	case Nine:
 		return 9
+	case Jack:
+		return 15
+	case King:
+		return 20
 	default:
 		return 10
 	}
@@ -85,32 +90,35 @@ func (r Rank) Label() string {
 	switch r {
 	case Ace:
 		return "A"
-	case Two:
-		return "2"
 	case Three:
 		return "3"
-	case Four:
-		return "4"
 	case Five:
 		return "5"
-	case Six:
-		return "6"
 	case Seven:
 		return "7"
-	case Eight:
-		return "8"
 	case Nine:
 		return "9"
-	case Ten:
-		return "10"
 	case Jack:
 		return "J"
-	case Queen:
-		return "Q"
+	case King:
+		return "K"
+	case Two:
+		return "2"
+	case Four:
+		return "4"
+	case Six:
+		return "6"
+	case Eight:
+		return "8"
+	case Ten:
+		return "10"
 	default:
 		return "K"
 	}
 }
+
+// DeckFaces is four each of 1, 3, 5, 7, 9, Jack (15) and King (20).
+var DeckFaces = []Rank{Ace, Three, Five, Seven, Nine, Jack, King}
 
 type Card struct {
 	ID   int
@@ -179,7 +187,7 @@ func Draws(outcome Outcome, holder int) [4]int {
 			}
 		}
 	case OutcomeUnder:
-		plan[holder] = 2
+		plan[holder] = 1
 	}
 	return plan
 }
@@ -203,7 +211,7 @@ func Pick(rng *rand.Rand, hand []Card, isHolder bool, running, after, round int)
 	if running+low.Value()+after > Limit {
 		return high
 	}
-	if running+high.Value()+after*10 <= Limit {
+	if running+high.Value()+after*20 <= Limit {
 		return high
 	}
 	if rng.Float64() < 0.18+float64(round)*0.06 {

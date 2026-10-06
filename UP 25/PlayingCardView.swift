@@ -111,12 +111,12 @@ struct CardFace: View {
         .clipShape(RoundedRectangle(cornerRadius: corner))
         .overlay(RoundedRectangle(cornerRadius: corner)
             .strokeBorder(Color(hex: 0xCBBF9F), lineWidth: 1))
-        .accessibilityLabel(L10n.cardA11y(rank: card.rank.rawValue, suit: card.suit.rawValue, value: card.value))
+        .accessibilityLabel(L10n.cardA11y(rank: card.rank.face, suit: card.suit.rawValue, value: card.value))
     }
 
     private func index(rank: CGFloat, suit: CGFloat) -> some View {
         VStack(spacing: -width * 0.02) {
-            Text(card.rank.rawValue).font(Typo.display(width * rank, bold: true))
+            Text(card.rank.face).font(Typo.display(width * rank, bold: true))
             Text(card.suit.rawValue).font(Typo.display(width * suit))
         }
         .foregroundColor(tint)
@@ -146,7 +146,7 @@ struct CardFace: View {
     private var court: some View {
         ZStack {
             RoundedRectangle(cornerRadius: width * 0.05).strokeBorder(tint, lineWidth: 1)
-            Text(card.rank.rawValue)
+            Text(card.rank.face)
                 .font(Typo.display(width * 0.38, bold: true))
                 .foregroundColor(tint)
             Text(card.suit.rawValue)
@@ -212,7 +212,7 @@ struct CardBack: View {
     }
 
     private var medallion: some View {
-        Text("25")
+        Text("30")
             .font(Typo.display(width * 0.20, bold: true))
             .foregroundColor(.brassHi)
             .frame(width: width * 0.46, height: width * 0.46)

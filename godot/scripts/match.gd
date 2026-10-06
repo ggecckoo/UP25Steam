@@ -1,10 +1,11 @@
 class_name Match
 extends RefCounted
 
-const LIMIT := 25
-const CAP := 40
-const ROUNDS := 12
-const HAND_SIZE := 13
+const LIMIT := 30
+const CAP := 80
+const ROUNDS := 8
+const HAND_SIZE := 7
+const DECK_SIZE := 28
 const PENALTY_PER_CARD := 4
 const THINK := {1: Vector2(1.9, 3.6), 2: Vector2(1.45, 2.7), 3: Vector2(1.25, 2.9)}
 const SUM_DELAY := 1.70
@@ -75,17 +76,45 @@ class Card extends RefCounted:
 	var suit: int
 
 	func value() -> int:
-		if rank <= 0:
-			return 1
-		if rank >= 9:
-			return 10
-		return rank + 1
+		match rank:
+			0:
+				return 1
+			2:
+				return 3
+			4:
+				return 5
+			6:
+				return 7
+			8:
+				return 9
+			10:
+				return 15
+			12:
+				return 20
+			_:
+				return rank + 1
 
 	func red() -> bool:
 		return suit == 1 or suit == 2
 
 	func label() -> String:
-		return ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"][rank]
+		match rank:
+			0:
+				return "A"
+			2:
+				return "3"
+			4:
+				return "5"
+			6:
+				return "7"
+			8:
+				return "9"
+			10:
+				return "J"
+			12:
+				return "K"
+			_:
+				return str(rank)
 
 	func symbol() -> String:
 		return ["♠", "♥", "♦", "♣"][suit]
@@ -133,7 +162,7 @@ static func draws(result: int, holder_id: int) -> Array:
 			if i != holder_id:
 				plan[i] = 1
 	elif result == OUTCOME_UNDER:
-		plan[holder_id] = 2
+		plan[holder_id] = 1
 	return plan
 
 
@@ -149,7 +178,7 @@ static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, runni
 		return high
 	if running + low.value() + after > LIMIT:
 		return high
-	if running + high.value() + after * 10 <= LIMIT:
+	if running + high.value() + after * 20 <= LIMIT:
 		return high
 	if rng.randf() < 0.18 + float(round_n) * 0.06:
 		return high
@@ -578,8 +607,8 @@ func _worse(a: Dictionary, b: Dictionary) -> bool:
 
 func _new_deck() -> Array:
 	var deck: Array = []
-	for suit in 4:
-		for rank in 13:
+	for rank in [0, 2, 4, 6, 8, 10, 12]:
+		for suit in 4:
 			deck.append(_mint(rank, suit))
 	_shuffle(deck)
 	return deck
@@ -732,7 +761,7 @@ func _restore(file) -> bool:
 	if middle == null:
 		return false
 	total += middle.size()
-	if total != 52:
+	if total != DECK_SIZE:
 		return false
 	var names = file.get("names", [])
 	var defaults := [text.t("common.player"), "Sis", "Kaya", "Karaca"]

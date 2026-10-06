@@ -1,12 +1,12 @@
-# Kullanım Koşulları — 25-40
+# Kullanım Koşulları — 30-80
 
 **Son güncelleme: 22 Eylül 2026**
 
-Bu Koşullar, Atiko Labs (“biz”, “bize”, “bizim”) tarafından Apple cihazları ile Steam üzerinden macOS, Windows ve Steam Deck için yayımlanan 25-40 oyun uygulamasının (“Uygulama”) kullanımını düzenler. Uygulamayı indirerek veya kullanarak bu koşulları kabul edersiniz. Kabul etmiyorsanız Uygulamayı kullanmayın.
+Bu Koşullar, Atiko Labs (“biz”, “bize”, “bizim”) tarafından Apple cihazları ile Steam üzerinden macOS, Windows ve Steam Deck için yayımlanan 30-80 oyun uygulamasının (“Uygulama”) kullanımını düzenler. Uygulamayı indirerek veya kullanarak bu koşulları kabul edersiniz. Kabul etmiyorsanız Uygulamayı kullanmayın.
 
 ## 1. Uygulama nedir
 
-25-40, bilgisayar rakiplerine karşı eğlence amacıyla oynanan tek oyunculu bir kart oyunudur. Bahis, gerçek para ile oynama, sanal para birimi veya ödül içermez.
+30-80, bilgisayar rakiplerine karşı eğlence amacıyla oynanan tek oyunculu bir kart oyunudur. Bahis, gerçek para ile oynama, sanal para birimi veya ödül içermez.
 
 ## 2. Hesaplar ve çevrimdışı oyun
 

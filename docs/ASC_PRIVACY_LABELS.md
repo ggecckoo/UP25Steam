@@ -1,6 +1,6 @@
-# ASC App Privacy — 25-40 için beyan tablosu
+# ASC App Privacy — 30-80 için beyan tablosu
 
-> App Store Connect → My Apps → 25-40 → **App Privacy** bölümüne girilecek cevaplar.
+> App Store Connect → My Apps → 30-80 → **App Privacy** bölümüne girilecek cevaplar.
 >
 > Bu üçü **birebir** tutmak zorunda; Apple review sırasında çapraz kontrol ediyor ve
 > uyuşmazlıkta "Inconsistent Privacy Declaration" ile ret geliyor:

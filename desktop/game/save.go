@@ -119,7 +119,7 @@ func (e *Engine) restore(file *resumeDisk) bool {
 		hands[i] = hand
 	}
 	middle, ok := take(file.Middle)
-	if !ok || total != 52 {
+	if !ok || total != DeckSize {
 		return false
 	}
 	names := []string{T("common.player"), "Kemal", "Nur", "Sabri"}

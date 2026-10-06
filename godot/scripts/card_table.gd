@@ -682,7 +682,7 @@ func _make_token() -> Node3D:
 	disc.position.y = 0.0035
 	root.add_child(disc)
 	var mark := Label3D.new()
-	mark.text = "25"
+	mark.text = "30"
 	mark.font_size = 72
 	mark.pixel_size = 0.00042
 	mark.outline_size = 0

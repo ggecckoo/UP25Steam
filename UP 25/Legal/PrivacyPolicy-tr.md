@@ -1,12 +1,12 @@
-# Gizlilik Politikası — 25-40
+# Gizlilik Politikası — 30-80
 
 **Son güncelleme: 22 Eylül 2026**
 
-25-40 (“Uygulama”), Atiko Labs (“biz”, “bize”, “bizim”) tarafından yayımlanan bir kart oyunudur. Bu politika Apple mobil sürümünü ve Steam üzerinden dağıtılan macOS, Windows ve Steam Deck sürümlerini kapsar.
+30-80 (“Uygulama”), Atiko Labs (“biz”, “bize”, “bizim”) tarafından yayımlanan bir kart oyunudur. Bu politika Apple mobil sürümünü ve Steam üzerinden dağıtılan macOS, Windows ve Steam Deck sürümlerini kapsar.
 
 ## 1. Kısa özet
 
-25-40’ı hesap açmadan ve bize kişisel veri göndermeden oynayabilirsiniz. Steam sürümü çevrimdışı çalışır, sunucularımızda oturum açmaz ve Steam kimliğinizi bize göndermez. Apple sürümü, istatistikleri cihazlar arasında korumak için isteğe bağlı olarak Game Center kullanabilir. Veri satmayız, sizi uygulamalar veya siteler arasında takip etmeyiz, reklam göstermeyiz ve analitik SDK kullanmayız.
+30-80’ı hesap açmadan ve bize kişisel veri göndermeden oynayabilirsiniz. Steam sürümü çevrimdışı çalışır, sunucularımızda oturum açmaz ve Steam kimliğinizi bize göndermez. Apple sürümü, istatistikleri cihazlar arasında korumak için isteğe bağlı olarak Game Center kullanabilir. Veri satmayız, sizi uygulamalar veya siteler arasında takip etmeyiz, reklam göstermeyiz ve analitik SDK kullanmayız.
 
 ## 2. Yerel veriler
 
@@ -54,7 +54,7 @@ Yaşadığınız yere göre kişisel verilere erişme, düzeltme, taşıma, işl
 
 ## 9. Çocuklar
 
-25-40 kumar, bahis, simüle kumar, sohbet veya kullanıcılar arası iletişim içermez. 13 yaşından küçük çocuklardan bilerek kişisel bilgi toplamayız.
+30-80 kumar, bahis, simüle kumar, sohbet veya kullanıcılar arası iletişim içermez. 13 yaşından küçük çocuklardan bilerek kişisel bilgi toplamayız.
 
 ## 10. Güvenlik ve uluslararası aktarımlar
 

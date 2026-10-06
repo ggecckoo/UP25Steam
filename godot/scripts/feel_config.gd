@@ -15,9 +15,9 @@ extends Resource
 @export var look_enabled := true
 @export var look_sensitivity := 0.0022
 @export var look_omega := 46.0
-@export var look_yaw_limit := 1.92
-@export var look_pitch_min := -0.55
-@export var look_pitch_max := 0.45
+@export var look_yaw_limit := 1.4
+@export var look_pitch_min := -0.48
+@export var look_pitch_max := 0.62
 @export var inspect_pitch := -0.16
 @export var reveal_pitch := -0.07
 @export var reveal_dolly := 0.06

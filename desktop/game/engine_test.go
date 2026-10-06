@@ -30,7 +30,7 @@ func TestEngineReachesGameOver(t *testing.T) {
 	e.rng = rand.New(rand.NewPCG(9, 9))
 	e.NewGame()
 	for i := 0; i < 200000 && e.Phase != PhaseOver; i++ {
-		if n := countCards(e); n != 52 {
+		if n := countCards(e); n != DeckSize {
 			t.Fatalf("cards %d round %d phase %d", n, e.Round, e.Phase)
 		}
 		if e.HumanTurn() {
@@ -72,11 +72,11 @@ func TestQuitReturnsCards(t *testing.T) {
 		t.Fatal("no card reached the table")
 	}
 	e.QuitMatch()
-	if e.Phase != PhaseMenu || !e.CanResume() || len(e.Table) != 0 || countCards(e) != 52 {
+	if e.Phase != PhaseMenu || !e.CanResume() || len(e.Table) != 0 || countCards(e) != DeckSize {
 		t.Fatalf("phase %d resume %v cards %d", e.Phase, e.CanResume(), countCards(e))
 	}
 	e2 := New()
-	if !e2.CanResume() || countCards(e2) != 52 {
+	if !e2.CanResume() || countCards(e2) != DeckSize {
 		t.Fatalf("reload resume %v cards %d", e2.CanResume(), countCards(e2))
 	}
 	e2.Resume()
@@ -103,7 +103,7 @@ func TestQuitOnFinalRevealEndsMatch(t *testing.T) {
 		e.Table = append(e.Table, Played{Card: card, By: i})
 	}
 	e.QuitMatch()
-	if e.Phase != PhaseOver || e.CanResume() || e.GamesFinished != 1 || countCards(e) != 52 {
+	if e.Phase != PhaseOver || e.CanResume() || e.GamesFinished != 1 || countCards(e) != DeckSize {
 		t.Fatalf("phase %d resume %v finished %d cards %d", e.Phase, e.CanResume(), e.GamesFinished, countCards(e))
 	}
 }

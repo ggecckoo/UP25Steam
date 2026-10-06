@@ -646,7 +646,7 @@ private struct ThresholdGauge: View {
                         .overlay(Rectangle().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
 
                         ZStack {
-                            Text("25")
+                            Text("30")
                                 .font(Typo.labelCaption(bold: true))
                                 .foregroundColor(.brass)
                                 .position(x: mark25, y: 9)

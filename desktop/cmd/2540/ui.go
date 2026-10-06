@@ -380,7 +380,7 @@ func (g *app) drawGauge(dst *ebiten.Image, x, y, w float64) {
 	mark := w * float64(game.Limit) / 40
 	fill(dst, x+mark-1, trackY-4, 2, 18, colBrass)
 	fill(dst, x+w-2, trackY-4, 2, 18, colBrass)
-	g.fonts.text(dst, "25", 14, x+mark, trackY+16, 0, colBrass, alignCenter)
+	g.fonts.text(dst, "30", 14, x+mark, trackY+16, 0, colBrass, alignCenter)
 	g.fonts.text(dst, "40", 14, x+w, trackY+16, 0, colBrass, alignCenter)
 	if verdict := g.e.VerdictText(); verdict != "" {
 		g.fonts.text(dst, verdict, 16, x+w/2, trackY+34, w, g.outcomeColor(), alignCenter)

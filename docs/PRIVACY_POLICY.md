@@ -1,4 +1,4 @@
-# Privacy Policy — 25-40
+# Privacy Policy — 30-80
 
 **Last updated: September 22, 2026**
 
@@ -13,13 +13,13 @@
 
 ---
 
-25-40 ("the App") is a card game published by Atiko Labs ("we", "us", "our").
+30-80 ("the App") is a card game published by Atiko Labs ("we", "us", "our").
 This policy covers the Apple mobile version and the macOS, Windows, and Steam
 Deck versions distributed through Steam.
 
 ## 1. The short version
 
-You can play 25-40 without an account and without sending personal data to us.
+You can play 30-80 without an account and without sending personal data to us.
 The Steam version is offline-first, does not sign in to our servers, and does
 not send us your Steam identity. The Apple version can optionally use Game
 Center to keep statistics across devices. We do not sell data, track you across
@@ -125,7 +125,7 @@ using the details in section 13.
 
 ## 10. Children
 
-25-40 is suitable for general audiences and contains no gambling, no wagering,
+30-80 is suitable for general audiences and contains no gambling, no wagering,
 no simulated gambling, no chat, and no user-to-user communication. We do not
 knowingly collect personal information from children under 13. If you believe a
 child has provided us data, contact us and we will delete it.

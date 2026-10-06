@@ -109,7 +109,7 @@ func main() {
 		cardSnd:   card,
 		revealSnd: reveal,
 	}
-	ebiten.SetWindowTitle("25-40")
+	ebiten.SetWindowTitle("30-80")
 	ebiten.SetWindowSize(viewW, viewH)
 	ebiten.SetWindowSizeLimits(960, 600, -1, -1)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)

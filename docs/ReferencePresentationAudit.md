@@ -6,7 +6,7 @@ Tarih: 2026-10-03. Motor repository'den okundu. Referans videosu projede yok (`D
 
 - Godot 4.7.2, `GL Compatibility`. Ana sahne `godot/scenes/main.tscn`.
 - Oynanış `godot/scripts/match.gd` içinde yerel 25-40 simülasyonu. Ağ katmanı yok. Sunucu otoritesi, RPC ve late-join yok.
-- Swift macOS istemcisi ve Go masaüstü istemcisi bu dilimin dışında. Kurallar değişmedi: limit 25, tavan 40, 12 tur, 13 kart, ceza elde kalan kart başınadır.
+- Swift macOS istemcisi ve Go masaüstü istemcisi bu dilimin dışında. Kurallar: eşik 30, tavan 80, en çok 8 tur, 7 kart. Deste 1, 3, 5, 7, 9, Vale 15 ve King 20.
 - Girdi Godot'un olay sistemidir. Ayrı bir InputMap eylemi yok. Yürüme yok; oyuncu koltuğa sabit.
 - Kamera `room_preview.gd` içinde, kafa kemiğine bağlı değil. Kartlar `card_table.gd` ve `seat_actor.gd` ile duruyor.
 - Animasyon, Meshy klibi değil. GLB'deki tek klip durduruluyor. Oturma, bakış ve kollar prosedürel.
