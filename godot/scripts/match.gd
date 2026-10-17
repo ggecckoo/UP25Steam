@@ -3,6 +3,12 @@ extends RefCounted
 
 const LIMIT := 30
 const CAP := 80
+const SEATS := 4
+# Limit and cap by how many players are still seated. With fewer cards a
+# round, 30 would leave the holder short nearly every time and 80 could never
+# be reached; these keep the four-seat mix of outcomes on a total the cards
+# can actually hit, and the cap stays "every card a King".
+const TARGETS := {4: Vector2i(LIMIT, CAP), 3: Vector2i(23, 60), 2: Vector2i(14, 40)}
 const ROUNDS := 8
 const HAND_SIZE := 7
 const DECK_SIZE := 28
@@ -14,11 +20,32 @@ const FLIP_STEP := 0.36
 const REVEAL_LEAD := 1.3
 const ROUND_LEAD := 1.9
 const DEAL_LEAD := 3.6
+# After each hand the last-placed player throws rock-paper-scissors against
+# the winner: the hand's result on show, three beats of the chant before both
+# hands come down, the throws on show, and a pause after (the room holds the
+# match while a loser walks out).
+const DUEL_LEAD := 3.4
+const CHANT_BEAT := 0.5
+const SHOW_HOLD := 2.4
+const TIE_HOLD := 1.6
+const AFTER_HOLD := 1.4
 
 const PHASE_MENU := 0
 const PHASE_PLAYING := 1
 const PHASE_REVEAL := 2
 const PHASE_OVER := 3
+const PHASE_DUEL := 4
+
+const DUEL_INTRO := 0
+const DUEL_CHOOSE := 1
+const DUEL_CHANT := 2
+const DUEL_SHOW := 3
+const DUEL_AFTER := 4
+
+const ROCK := 0
+const PAPER := 1
+const SCISSORS := 2
+const THROW_KEYS := ["rps.rock", "rps.paper", "rps.scissors"]
 
 const OUTCOME_OVER := 0
 const OUTCOME_EXACT := 1
@@ -55,10 +82,23 @@ var games_won := 0
 var sound_on := true
 var paused := false
 var text: TextBank
+var hand_no := 1
+var exits: Array = []
+var champion := -1
+var duel_loser := -1
+var duel_winner := -1
+var duel_stage := DUEL_INTRO
+var duel_age := 0.0
+var duel_throws: Dictionary = {}
+var duel_out := false
+var duel_ties := 0
 
 var _middle: Array = []
 var _rng := RandomNumberGenerator.new()
 var _pace := RandomNumberGenerator.new()
+# Throws come from their own generator, drawn afresh for every throw, so a
+# tie never carries anyone's pick into the next one.
+var _hands_rng := RandomNumberGenerator.new()
 var _timer := 0.0
 var _stage := STAGE_IDLE
 var _status := STATUS_NONE
@@ -67,6 +107,11 @@ var _recorded := false
 var _can_resume := false
 var _applied := false
 var _next_id := 0
+var _pick := -1
+var _settled := false
+# What a resumed match picks up with: "" mid-hand, "duel" when the throw is
+# still owed, "next" when it was thrown and the next hand is due.
+var _pending := ""
 var save_path := ""
 
 
@@ -125,6 +170,8 @@ class Player extends RefCounted:
 	var player_name: String
 	var human: bool
 	var hand: Array = []
+	var out := false
+	var left_after := 0
 
 	func penalty() -> int:
 		return hand.size() * Match.PENALTY_PER_CARD
@@ -145,20 +192,28 @@ static func hand_value(hand: Array) -> int:
 	return total
 
 
-static func outcome_for(total: int) -> int:
-	if total == CAP:
+static func outcome_for(total: int, limit := LIMIT, cap := CAP) -> int:
+	if total == cap:
 		return OUTCOME_CAP
-	if total > LIMIT:
+	if total > limit:
 		return OUTCOME_OVER
-	if total == LIMIT:
+	if total == limit:
 		return OUTCOME_EXACT
 	return OUTCOME_UNDER
 
 
-static func draws(result: int, holder_id: int) -> Array:
+static func target_for(seats: int) -> Vector2i:
+	# With no match laid out there is no smaller table; a table down to its
+	# last player keeps the two-seat pair until the sitting closes.
+	if seats <= 0:
+		return TARGETS[SEATS]
+	return TARGETS.get(clampi(seats, 2, SEATS), TARGETS[SEATS])
+
+
+static func draws(result: int, holder_id: int, seats: Array = [0, 1, 2, 3]) -> Array:
 	var plan := [0, 0, 0, 0]
 	if result == OUTCOME_EXACT or result == OUTCOME_CAP:
-		for i in 4:
+		for i in seats:
 			if i != holder_id:
 				plan[i] = 1
 	elif result == OUTCOME_UNDER:
@@ -166,7 +221,11 @@ static func draws(result: int, holder_id: int) -> Array:
 	return plan
 
 
-static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, running: int, after: int, round_n: int) -> Card:
+static func beats(a: int, b: int) -> bool:
+	return (a - b + 3) % 3 == 1
+
+
+static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, running: int, after: int, round_n: int, limit := LIMIT) -> Card:
 	var low: Card = hand[0]
 	var high: Card = hand[0]
 	for card in hand:
@@ -176,9 +235,9 @@ static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, runni
 			high = card
 	if is_holder:
 		return high
-	if running + low.value() + after > LIMIT:
+	if running + low.value() + after > limit:
 		return high
-	if running + high.value() + after * 20 <= LIMIT:
+	if running + high.value() + after * 20 <= limit:
 		return high
 	if rng.randf() < 0.18 + float(round_n) * 0.06:
 		return high
@@ -188,6 +247,7 @@ static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, runni
 func _init() -> void:
 	_rng.randomize()
 	_pace.randomize()
+	_hands_rng.randomize()
 
 
 func configure(bank: TextBank, path: String) -> void:
@@ -200,34 +260,37 @@ func new_game() -> void:
 	paused = false
 	_recorded = false
 	_applied = false
-	var deck := _new_deck()
 	var names := [text.t("common.player"), "Sis", "Kaya", "Karaca"]
 	players = []
-	for i in 4:
+	for i in SEATS:
 		var player := Player.new()
 		player.id = i
 		player.player_name = names[i]
 		player.human = i == 0
-		player.hand = deck.slice(i * HAND_SIZE, i * HAND_SIZE + HAND_SIZE)
 		players.append(player)
-	_sort_hand(players[0].hand)
-	_middle = []
-	holder = _rng.randi_range(0, 3)
-	round_no = 1
-	standings = []
-	table = []
+	hand_no = 1
+	exits = []
+	champion = -1
+	_clear_duel()
+	_deal()
 	_start_round(DEAL_LEAD)
 
 
 func can_resume() -> bool:
-	return _can_resume and players.size() == 4 and round_no >= 1 and round_no <= ROUNDS and phase != PHASE_OVER
+	return _can_resume and players.size() == SEATS and round_no >= 1 and round_no <= ROUNDS and phase != PHASE_OVER
 
 
 func resume() -> void:
 	if not can_resume():
 		return
 	_recorded = false
-	_start_round(0.6)
+	match _pending:
+		"duel":
+			_open_duel(duel_loser, duel_winner)
+		"next":
+			_next_hand()
+		_:
+			_start_round(0.6)
 
 
 func return_to_menu() -> void:
@@ -238,6 +301,9 @@ func return_to_menu() -> void:
 	table = []
 	_middle = []
 	standings = []
+	exits = []
+	champion = -1
+	_clear_duel()
 	_recorded = false
 	has_outcome = false
 	sum_shown = false
@@ -245,7 +311,7 @@ func return_to_menu() -> void:
 
 
 func set_paused(value: bool) -> void:
-	if phase != PHASE_PLAYING and phase != PHASE_REVEAL:
+	if phase != PHASE_PLAYING and phase != PHASE_REVEAL and phase != PHASE_DUEL:
 		return
 	paused = value
 
@@ -259,11 +325,6 @@ func quit_match() -> void:
 	paused = false
 	if phase == PHASE_REVEAL:
 		_finish_reveal()
-		if phase == PHASE_OVER:
-			return
-		phase = PHASE_MENU
-		_can_resume = players.size() == 4
-		_save()
 	elif phase == PHASE_PLAYING:
 		for played in table:
 			if played.by >= 0 and played.by < players.size():
@@ -273,11 +334,16 @@ func quit_match() -> void:
 		table = []
 		has_outcome = false
 		sum_shown = false
+	elif phase != PHASE_DUEL:
 		phase = PHASE_MENU
-		_can_resume = players.size() == 4
-		_save()
-	else:
-		phase = PHASE_MENU
+		return
+	if phase == PHASE_DUEL and _settled and _decided():
+		_close_session()
+	if phase == PHASE_OVER:
+		return
+	phase = PHASE_MENU
+	_can_resume = players.size() == SEATS
+	_save()
 
 
 func tick(dt: float) -> void:
@@ -287,6 +353,8 @@ func tick(dt: float) -> void:
 		_tick_playing(dt)
 	elif phase == PHASE_REVEAL:
 		_tick_reveal(dt)
+	elif phase == PHASE_DUEL:
+		_tick_duel(dt)
 
 
 func play_card(index: int) -> bool:
@@ -306,22 +374,46 @@ func skip_reveal() -> void:
 
 
 func human_turn() -> bool:
-	if phase != PHASE_PLAYING or paused or table.size() >= 4 or players.is_empty() or not players[0].human:
+	if phase != PHASE_PLAYING or paused or players.is_empty() or not players[0].human or players[0].out:
 		return false
-	return order()[table.size()] == 0
+	var seats := order()
+	if table.size() >= seats.size():
+		return false
+	return seats[table.size()] == 0
 
 
 func acting() -> int:
-	if phase != PHASE_PLAYING or paused or table.size() >= 4 or players.size() < 4:
+	if phase != PHASE_PLAYING or paused or players.size() < SEATS:
 		return -1
-	return order()[table.size()]
+	var seats := order()
+	if table.size() >= seats.size():
+		return -1
+	return seats[table.size()]
 
 
 func order() -> Array:
 	var seats := []
-	for i in 4:
-		seats.append((holder + i) % 4)
+	for i in SEATS:
+		var seat := (holder + i) % SEATS
+		if seat < players.size() and not players[seat].out:
+			seats.append(seat)
 	return seats
+
+
+func seated() -> Array:
+	var seats := []
+	for player in players:
+		if not player.out:
+			seats.append(player.id)
+	return seats
+
+
+func limit() -> int:
+	return target_for(seated().size()).x
+
+
+func cap() -> int:
+	return target_for(seated().size()).y
 
 
 func table_sum() -> int:
@@ -332,7 +424,7 @@ func table_sum() -> int:
 
 
 func turn_token() -> int:
-	return round_no * 10 + table.size()
+	return hand_no * 1000 + round_no * 10 + table.size()
 
 
 func card_face_up(index: int) -> bool:
@@ -356,9 +448,9 @@ func status_text() -> String:
 		STATUS_OVER:
 			return text.format_key("feed.over %@", [_status_name])
 		STATUS_EXACT:
-			return text.t("feed.exact")
+			return _scaled(text.t("feed.exact"))
 		STATUS_CAP:
-			return text.t("feed.cap")
+			return _scaled(text.t("feed.cap"))
 		STATUS_UNDER:
 			return text.format_key("feed.under %@", [_status_name])
 	return ""
@@ -370,11 +462,11 @@ func verdict_text() -> String:
 	var who: String = players[holder].player_name.to_upper()
 	match outcome:
 		OUTCOME_OVER:
-			return text.format_key("verdict.over %@", [who])
+			return _scaled(text.format_key("verdict.over %@", [who]))
 		OUTCOME_EXACT:
-			return text.format_key("verdict.exact %@", [who])
+			return _scaled(text.format_key("verdict.exact %@", [who]))
 		OUTCOME_CAP:
-			return text.format_key("verdict.cap %@", [who])
+			return _scaled(text.format_key("verdict.cap %@", [who]))
 	return text.format_key("verdict.under %@", [who])
 
 
@@ -382,8 +474,100 @@ func hint_text() -> String:
 	if not human_turn():
 		return ""
 	if holder == 0:
-		return text.t("game.hint.holder")
-	return text.t("game.hint.other")
+		return _scaled(text.t("game.hint.holder"))
+	return _scaled(text.t("game.hint.other"))
+
+
+func _scaled(line: String) -> String:
+	# The catalog spells out the four-seat 30 and 80 in every language; a
+	# smaller table plays to its own pair.
+	var goal := target_for(seated().size())
+	if goal == TARGETS[SEATS]:
+		return line
+	line = line.replace(str(CAP), str(goal.y)).replace(str(LIMIT), str(goal.x))
+	if text != null and text.lang == "tr":
+		# Turkish case endings follow the last vowel of the spoken number.
+		for number in [goal.x, goal.y]:
+			var vowel := _tr_vowel(number)
+			for old in ["ı", "i", "u", "ü"]:
+				line = line.replace("%d'%s" % [number, old], "%d'%s" % [number, vowel])
+	return line
+
+
+static func _tr_vowel(number: int) -> String:
+	var units := ["", "i", "i", "ü", "ü", "i", "ı", "i", "i", "u"]
+	var tens := ["ü", "u", "i", "u", "ı", "i", "ı", "i", "i", "ı"]
+	if number % 10 != 0:
+		return units[number % 10]
+	return tens[(number / 10) % 10]
+
+
+func human_dueling() -> bool:
+	return phase == PHASE_DUEL and (duel_loser == 0 or duel_winner == 0)
+
+
+func choosing() -> bool:
+	return human_dueling() and not paused and (duel_stage == DUEL_INTRO or duel_stage == DUEL_CHOOSE)
+
+
+func duel_beat() -> int:
+	# Chant word on show: 0 rock, 1 paper, 2 scissors.
+	if phase != PHASE_DUEL or duel_stage != DUEL_CHANT:
+		return -1
+	return clampi(int(duel_age / CHANT_BEAT), 0, 2)
+
+
+func throw_name(choice: int) -> String:
+	if choice < ROCK or choice > SCISSORS:
+		return ""
+	return text.t(THROW_KEYS[choice])
+
+
+func duel_heading() -> String:
+	if phase != PHASE_DUEL or duel_loser < 0 or duel_winner < 0:
+		return ""
+	var loser: String = players[duel_loser].player_name
+	var winner: String = players[duel_winner].player_name
+	match duel_stage:
+		DUEL_INTRO, DUEL_CHOOSE:
+			if duel_ties > 0:
+				return text.t("duel.again")
+			return text.format_key("duel.handOver %@ %@", [winner, loser])
+		DUEL_CHANT:
+			var word := throw_name(duel_beat())
+			return word + ("!" if duel_beat() == SCISSORS else "…")
+		DUEL_SHOW:
+			if not _settled:
+				return text.t("duel.tie")
+			if duel_out:
+				return text.t("duel.youLost") if duel_loser == 0 else text.format_key("duel.lost %@", [loser])
+			return text.t("duel.youStay") if duel_loser == 0 else text.format_key("duel.stays %@", [loser])
+		DUEL_AFTER:
+			if duel_out:
+				return text.t("duel.youLeave") if duel_loser == 0 else text.format_key("duel.leaves %@", [loser])
+			return text.t("duel.youStay") if duel_loser == 0 else text.format_key("duel.stays %@", [loser])
+	return ""
+
+
+func duel_detail() -> String:
+	if phase != PHASE_DUEL or duel_loser < 0 or duel_winner < 0:
+		return ""
+	var loser: String = players[duel_loser].player_name
+	var winner: String = players[duel_winner].player_name
+	match duel_stage:
+		DUEL_INTRO, DUEL_CHOOSE:
+			if duel_loser == 0:
+				return text.format_key("duel.youLast %@", [winner])
+			if duel_winner == 0:
+				return text.format_key("duel.youFirst %@", [loser])
+			return text.format_key("duel.stakes %@ %@", [loser, winner])
+		DUEL_SHOW, DUEL_AFTER:
+			if duel_throws.size() == 2:
+				return "%s · %s     %s · %s" % [
+					loser, throw_name(int(duel_throws[duel_loser])),
+					winner, throw_name(int(duel_throws[duel_winner])),
+				]
+	return ""
 
 
 func middle() -> Array:
@@ -413,11 +597,12 @@ func _start_round(lead := 0.0) -> void:
 
 
 func _arm_turn() -> void:
-	if players.size() < 4 or table.size() >= 4:
+	var seats := order()
+	if players.size() < SEATS or table.size() >= seats.size():
 		return
-	var seat: int = order()[table.size()]
+	var seat: int = seats[table.size()]
 	if players[seat].hand.is_empty():
-		_finish_game()
+		_finish_hand()
 		return
 	if seat == 0:
 		_status = STATUS_YOU_HOLDER if holder == 0 else STATUS_PLAY
@@ -457,9 +642,10 @@ func _tick_playing(dt: float) -> void:
 func _play_ai(seat: int) -> void:
 	var hand: Array = players[seat].hand
 	if hand.is_empty():
-		_finish_game()
+		_finish_hand()
 		return
-	var card := pick(_rng, hand, seat == holder, table_sum(), 3 - table.size(), round_no)
+	var after := order().size() - 1 - table.size()
+	var card := pick(_rng, hand, seat == holder, table_sum(), after, round_no, limit())
 	_place(seat, card)
 
 
@@ -469,7 +655,7 @@ func _place(seat: int, card: Card) -> void:
 	played.card = card
 	played.by = seat
 	table.append(played)
-	if table.size() >= 4:
+	if table.size() >= order().size():
 		_begin_reveal()
 		return
 	_arm_turn()
@@ -477,7 +663,7 @@ func _place(seat: int, card: Card) -> void:
 
 func _begin_reveal() -> void:
 	phase = PHASE_REVEAL
-	outcome = outcome_for(table_sum())
+	outcome = outcome_for(table_sum(), limit(), cap())
 	has_outcome = true
 	sum_shown = false
 	reveal_age = -REVEAL_LEAD
@@ -523,7 +709,7 @@ func _set_verdict() -> void:
 func _finish_reveal() -> void:
 	_apply_round()
 	if round_no >= ROUNDS:
-		_finish_game()
+		_finish_hand()
 		return
 	round_no += 1
 	_start_round(ROUND_LEAD)
@@ -534,14 +720,14 @@ func _apply_round() -> void:
 		return
 	_applied = true
 	if not has_outcome:
-		outcome = outcome_for(table_sum())
+		outcome = outcome_for(table_sum(), limit(), cap())
 		has_outcome = true
 	var pile: Array = []
 	for played in table:
 		pile.append(played.card)
 	_shuffle(pile)
 	pile.append_array(_middle)
-	var plan := draws(outcome, holder)
+	var plan := draws(outcome, holder, seated())
 	for seat in order():
 		var count: int = plan[seat]
 		if count <= 0 or pile.is_empty():
@@ -552,33 +738,234 @@ func _apply_round() -> void:
 		if seat == 0:
 			_sort_hand(players[seat].hand)
 	_middle = pile
-	holder = (holder + 1) % 4
+	holder = _next_seat(holder)
 	table = []
 	has_outcome = false
 	sum_shown = false
 
 
-func _finish_game() -> void:
-	if phase == PHASE_OVER:
+func _next_seat(seat: int) -> int:
+	for step in range(1, SEATS + 1):
+		var next := (seat + step) % SEATS
+		if not players[next].out:
+			return next
+	return seat
+
+
+func _deal() -> void:
+	var deck := _new_deck()
+	var seats := seated()
+	for player in players:
+		player.hand = []
+	for k in seats.size():
+		players[seats[k]].hand = deck.slice(k * HAND_SIZE, k * HAND_SIZE + HAND_SIZE)
+	_sort_hand(players[0].hand)
+	_middle = deck.slice(seats.size() * HAND_SIZE)
+	holder = seats[_rng.randi_range(0, seats.size() - 1)]
+	round_no = 1
+	standings = []
+	table = []
+
+
+func _finish_hand() -> void:
+	if phase == PHASE_DUEL or phase == PHASE_OVER:
 		return
 	for played in table:
 		_middle.append(played.card)
 	table = []
+	paused = false
+	has_outcome = false
+	sum_shown = false
+	standings = _make_standings()
+	if standings.size() < 2:
+		_close_session()
+		return
+	_open_duel(int(standings[standings.size() - 1].id), int(standings[0].id))
+	_save()
+
+
+func _open_duel(loser: int, winner: int) -> void:
+	phase = PHASE_DUEL
+	duel_loser = loser
+	duel_winner = winner
+	duel_throws = {}
+	duel_out = false
+	duel_ties = 0
+	_pick = -1
+	_settled = false
+	_pending = "duel"
+	_can_resume = true
+	_status = STATUS_NONE
+	if standings.is_empty():
+		standings = _make_standings()
+	_duel_stage(DUEL_INTRO, DUEL_LEAD)
+
+
+func _clear_duel() -> void:
+	duel_loser = -1
+	duel_winner = -1
+	duel_stage = DUEL_INTRO
+	duel_age = 0.0
+	duel_throws = {}
+	duel_out = false
+	duel_ties = 0
+	_pick = -1
+	_settled = false
+	_pending = ""
+
+
+func _duel_stage(stage: int, wait: float) -> void:
+	duel_stage = stage
+	duel_age = 0.0
+	_timer = wait
+
+
+func _tick_duel(dt: float) -> void:
+	duel_age += dt
+	if duel_stage == DUEL_CHOOSE:
+		return
+	_timer -= dt
+	if _timer > 0.0:
+		return
+	match duel_stage:
+		DUEL_INTRO:
+			_duel_ready()
+		DUEL_CHANT:
+			_throw()
+		DUEL_SHOW:
+			if _settled:
+				_duel_stage(DUEL_AFTER, AFTER_HOLD)
+			else:
+				duel_throws = {}
+				_duel_ready()
+		DUEL_AFTER:
+			_close_duel()
+
+
+func choose_throw(choice: int) -> bool:
+	if not choosing() or choice < ROCK or choice > SCISSORS:
+		return false
+	_pick = choice
+	_duel_stage(DUEL_CHANT, CHANT_BEAT * 3.0)
+	return true
+
+
+func skip_duel() -> void:
+	if phase != PHASE_DUEL or paused:
+		return
+	if duel_stage == DUEL_INTRO:
+		_duel_ready()
+	elif duel_stage == DUEL_SHOW or (duel_stage == DUEL_AFTER and not duel_out):
+		_timer = 0.0
+		_tick_duel(0.001)
+
+
+func _duel_ready() -> void:
+	if human_dueling() and _pick < 0:
+		_duel_stage(DUEL_CHOOSE, 0.0)
+	else:
+		_duel_stage(DUEL_CHANT, CHANT_BEAT * 3.0)
+
+
+func _throw() -> void:
+	# The seated player's pick is never read for the other hand.
+	var thrown := {}
+	for seat in [duel_loser, duel_winner]:
+		thrown[seat] = _pick if seat == 0 and _pick >= 0 else _hands_rng.randi_range(ROCK, SCISSORS)
+	_pick = -1
+	duel_throws = thrown
+	if int(thrown[duel_loser]) == int(thrown[duel_winner]):
+		duel_ties += 1
+		_duel_stage(DUEL_SHOW, TIE_HOLD)
+		return
+	_settle(beats(int(thrown[duel_winner]), int(thrown[duel_loser])))
+	_duel_stage(DUEL_SHOW, SHOW_HOLD)
+
+
+func _settle(loser_out: bool) -> void:
+	# Only the last-placed player has anything at stake; the winner of the
+	# hand keeps the seat whatever they throw.
+	_settled = true
+	duel_out = loser_out
+	if loser_out:
+		var gone: Player = players[duel_loser]
+		gone.out = true
+		gone.left_after = hand_no
+		_middle.append_array(gone.hand)
+		gone.hand = []
+		exits.append(duel_loser)
+	if _decided():
+		_pending = ""
+		_can_resume = false
+		_record()
+	else:
+		_pending = "next"
+	_save()
+
+
+func _decided() -> bool:
+	return players.is_empty() or players[0].out or seated().size() <= 1
+
+
+func _close_duel() -> void:
+	if _decided():
+		_close_session()
+		return
+	_next_hand()
+
+
+func _next_hand() -> void:
+	hand_no += 1
+	_clear_duel()
+	_deal()
+	_start_round(DEAL_LEAD)
+
+
+func _close_session() -> void:
+	if phase == PHASE_OVER:
+		return
 	phase = PHASE_OVER
 	paused = false
 	_can_resume = false
-	standings = _make_standings()
-	if not _recorded:
-		_recorded = true
-		games_finished += 1
-		if standings.size() > 0 and standings[0].id == 0:
-			games_won += 1
+	_record()
+	standings = _final_standings()
 	_save()
+
+
+func _record() -> void:
+	if _recorded:
+		return
+	_recorded = true
+	var seats := seated()
+	champion = seats[0] if seats.size() == 1 else -1
+	games_finished += 1
+	if champion == 0:
+		games_won += 1
+
+
+func _final_standings() -> Array:
+	# Whoever is still seated, by the last hand, then the ones who walked
+	# out, latest first.
+	var rows := _make_standings()
+	for i in range(exits.size() - 1, -1, -1):
+		var player: Player = players[int(exits[i])]
+		rows.append({
+			"id": player.id,
+			"name": player.player_name,
+			"cards": 0,
+			"value": 0,
+			"penalty": 0,
+			"score": 0,
+			"left_after": player.left_after,
+		})
+	return rows
 
 
 func _make_standings() -> Array:
 	var rows: Array = []
 	for player in players:
+		if player.out:
+			continue
 		rows.append({
 			"id": player.id,
 			"name": player.player_name,
@@ -586,6 +973,7 @@ func _make_standings() -> Array:
 			"value": hand_value(player.hand),
 			"penalty": player.penalty(),
 			"score": player.score(),
+			"left_after": 0,
 		})
 	for i in range(1, rows.size()):
 		var row = rows[i]
@@ -661,7 +1049,7 @@ func _save() -> void:
 	if save_path == "":
 		return
 	var file := {
-		"version": 1,
+		"version": 2,
 		"gamesFinished": games_finished,
 		"gamesWon": games_won,
 		"language": text.lang if text != null else "",
@@ -705,25 +1093,34 @@ func load_save() -> void:
 
 
 func _resume_snapshot() -> Dictionary:
-	if phase == PHASE_OVER or players.size() != 4 or round_no < 1 or round_no > ROUNDS:
+	if phase == PHASE_OVER or players.size() != SEATS or round_no < 1 or round_no > ROUNDS or _decided():
 		return {}
 	var hands: Array = []
+	var out: Array = []
 	for player in players:
 		var copy: Array = []
 		for card in player.hand:
 			copy.append(card)
 		hands.append(copy)
+		out.append(player.left_after if player.out else 0)
 	if table.size() > 0 and not _applied:
 		for played in table:
 			hands[played.by].append(played.card)
 		_sort_hand(hands[0])
-	return {
+	var snap := {
 		"round": round_no,
 		"holder": holder,
 		"names": [players[0].player_name, players[1].player_name, players[2].player_name, players[3].player_name],
 		"hands": _encode_cards(hands),
 		"middle": _encode_list(_middle if table.is_empty() or _applied else _middle),
+		"hand": hand_no,
+		"out": out,
+		"exits": exits.duplicate(),
+		"pending": _pending,
 	}
+	if _pending == "duel":
+		snap["duel"] = [duel_loser, duel_winner]
+	return snap
 
 
 func _encode_cards(hands: Array) -> Array:
@@ -763,24 +1160,65 @@ func _restore(file) -> bool:
 	total += middle.size()
 	if total != DECK_SIZE:
 		return false
+	# Saves from before seats could empty have none of these.
+	var out = file.get("out", [0, 0, 0, 0])
+	var pending := str(file.get("pending", ""))
+	var duel = file.get("duel", [])
+	if not out is Array or out.size() != SEATS or int(out[0]) != 0 or not pending in ["", "duel", "next"]:
+		return false
+	var left := 0
+	for i in SEATS:
+		if int(out[i]) > 0:
+			left += 1
+			if not restored[i].is_empty() or holder_n == i:
+				return false
+	if left > SEATS - 2:
+		return false
+	if pending == "duel":
+		if not duel is Array or duel.size() != 2:
+			return false
+		for seat in duel:
+			if int(seat) < 0 or int(seat) >= SEATS or int(out[int(seat)]) > 0:
+				return false
+		if int(duel[0]) == int(duel[1]):
+			return false
 	var names = file.get("names", [])
 	var defaults := [text.t("common.player"), "Sis", "Kaya", "Karaca"]
 	players = []
-	for i in 4:
+	for i in SEATS:
 		var player := Player.new()
 		player.id = i
 		player.human = i == 0
 		player.player_name = defaults[i]
-		if names is Array and names.size() == 4 and str(names[i]) != "":
+		if names is Array and names.size() == SEATS and str(names[i]) != "":
 			player.player_name = str(names[i])
 		if i > 0 and player.player_name in ["Kemal", "Nur", "Sabri"]:
 			player.player_name = defaults[i]
 		player.hand = restored[i]
+		player.out = int(out[i]) > 0
+		player.left_after = int(out[i])
 		players.append(player)
 	_sort_hand(players[0].hand)
 	_middle = middle
 	holder = holder_n
 	round_no = round_n
+	hand_no = maxi(1, int(file.get("hand", 1)))
+	exits = []
+	var order_out = file.get("exits", [])
+	if order_out is Array:
+		for seat in order_out:
+			if int(seat) > 0 and int(seat) < SEATS and players[int(seat)].out and not exits.has(int(seat)):
+				exits.append(int(seat))
+	for player in players:
+		if player.out and not exits.has(player.id):
+			exits.append(player.id)
+	champion = -1
+	standings = []
+	_clear_duel()
+	_pending = pending
+	if pending == "duel":
+		duel_loser = int(duel[0])
+		duel_winner = int(duel[1])
 	table = []
 	phase = PHASE_MENU
 	_can_resume = true
