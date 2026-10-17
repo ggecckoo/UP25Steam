@@ -9,6 +9,7 @@ App Store ve Steam çıkış hazırlığı dokümanları.
 | [APPLE_COMPLIANCE.md](APPLE_COMPLIANCE.md) | Ret önleme kontrol listesi. Neyin gerektiği, neyin **gerekmediği**. Buradan başla. | TR |
 | [ASC_PRIVACY_LABELS.md](ASC_PRIVACY_LABELS.md) | App Store Connect → App Privacy'ye girilecek tablolar + hazır `PrivacyInfo.xcprivacy` | TR |
 | [STEAM_RELEASE.md](STEAM_RELEASE.md) | macOS, Windows ve Steam Deck paketleri, portal ayarları ve mağaza varlıkları | EN |
+| [MULTIPLAYER.md](MULTIPLAYER.md) | Çok oyunculu masa arka ucu: mimari, tablolar/RLS, API, test, canlıya alma | TR |
 | [PRIVACY_POLICY.md](PRIVACY_POLICY.md) | Yayımlanacak gizlilik politikası | EN |
 | [TERMS_OF_SERVICE.md](TERMS_OF_SERVICE.md) | Kullanım şartları | EN |
 

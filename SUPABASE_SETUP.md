@@ -49,6 +49,7 @@ Edge Function kabul ettiği bundle’lar: `com.atikolabs.UP-25`, `com.atikolabs.
 ./.bin/supabase db push --yes
 ./.bin/supabase functions deploy gamecenter-auth --no-verify-jwt
 ./.bin/supabase functions deploy delete-account
+./.bin/supabase functions deploy game-table   # çok oyunculu masa (docs/MULTIPLAYER.md)
 ```
 
 ## Tablolar
@@ -58,3 +59,4 @@ Edge Function kabul ettiği bundle’lar: `com.atikolabs.UP-25`, `com.atikolabs.
 | `profiles.game_center_id` | Game Center `teamPlayerID` (unique) |
 | `profiles.display_name` | GC görünen ad |
 | `game_results` | Skor / sıra / galibiyet |
+| `game_tables`, `game_table_members`, `game_table_hands`, `game_table_engines` | Çok oyunculu masalar — bkz. `docs/MULTIPLAYER.md` |

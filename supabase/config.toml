@@ -47,5 +47,9 @@ enabled = true
 [functions.gamecenter-auth]
 verify_jwt = false
 
+# Çok oyunculu masa: yalnız giriş yapmış kullanıcılar
+[functions.game-table]
+verify_jwt = true
+
 [analytics]
 enabled = false
