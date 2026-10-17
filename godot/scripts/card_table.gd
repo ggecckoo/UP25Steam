@@ -3,12 +3,25 @@ extends Node3D
 signal sound(kind: String)
 
 const CardArt := preload("res://scripts/card_art.gd")
-const SPOT := 0.10
+const TitleScreen := preload("res://scripts/title_screen.gd")
 const PICKUP := 0.58
 const TOKEN := 0.43
 const DEAL_STEP := 0.08
 const STACK := 0.00055
 const LIFT := 0.0012
+# Thrown cards land in a loose square in the middle, each in the corner on
+# its thrower's side, about this far out from the middle each way (corners
+# as right-of-centre and toward-the-seated-player signs). Once they are
+# turned, the croupier lines them up in one row across the middle, square
+# to the seated player and this far apart; drawn cards are slid this far
+# out toward whoever draws them, inside the croupier's reach.
+const SQUARE := 0.092
+const CORNERS := [Vector2(1, 1), Vector2(1, -1), Vector2(-1, -1), Vector2(-1, 1)]
+const ROW_GAP := 0.16
+const HANDED := 0.42
+# A new hand is dealt onto the felt this far out toward each player, a pile
+# before each of them, which they pick up once the deal is done.
+const DEALT := 0.44
 
 var _art: Node
 var _actors: Dictionary = {}
@@ -26,8 +39,9 @@ var _dealing: Array = []
 var _deal_clock := 0.0
 var _incoming: Dictionary = {}
 var _token: Node3D
-var _token_angle := 0.0
 var _token_holder := -1
+var _token_hop := 0.0
+var _token_moving := false
 var _glances: Dictionary = {}
 var _peeks: Dictionary = {}
 var _clock := 0.0
@@ -36,9 +50,16 @@ var _selected := -1
 var _turn_mark: MeshInstance3D
 var _turn_angle := 0.0
 var _rng := RandomNumberGenerator.new()
+var _dealer: Node3D
+var _lined := false
+var _layout: Dictionary = {}
+var _places: Array = []
+var _deal_piles: Dictionary = {}
+var _deal_left := 0
 
 
-func setup(actors: Dictionary, dirs: Dictionary, camera: Camera3D, felt_top: float) -> void:
+func setup(actors: Dictionary, dirs: Dictionary, camera: Camera3D, felt_top: float, dealer: Node3D = null) -> void:
+	_dealer = dealer
 	_actors = actors
 	_dirs = dirs
 	_camera = camera
@@ -117,8 +138,10 @@ func busy() -> bool:
 		return true
 	if not _dealing.is_empty() or not _jobs.is_empty() or not _incoming.is_empty():
 		return true
+	if _dealer != null and _dealer.busy():
+		return true
 	for entry in _entries:
-		if entry["state"] == "held" or entry["state"] == "flying":
+		if entry["state"] in ["held", "flying", "turning", "open"]:
 			return true
 	for actor in _actors.values():
 		if actor.busy():
@@ -157,15 +180,25 @@ func _clear() -> void:
 	_glances.clear()
 	_incoming.clear()
 	_token_holder = -1
+	_token_moving = false
+	_deal_piles.clear()
+	_deal_left = 0
+	_lined = false
+	_layout.clear()
+	_places.clear()
+	if _dealer != null:
+		_dealer.finish_all()
 	for actor in _actors.values():
 		actor.clear_fan()
 
 
 func _rebuild(game: Match) -> void:
 	_clear()
-	var fresh := game.round_no == 1 and game.table.is_empty() and game.middle().is_empty()
+	var seats := game.seated()
+	var fresh := game.phase == Match.PHASE_PLAYING and game.round_no == 1 and game.table.is_empty()
+	fresh = fresh and game.middle().size() == Match.DECK_SIZE - seats.size() * Match.HAND_SIZE
 	for player in game.players:
-		if player.hand.size() != Match.HAND_SIZE:
+		if player.hand.size() != (0 if player.out else Match.HAND_SIZE):
 			fresh = false
 	if fresh:
 		_lay_deck(game)
@@ -196,13 +229,81 @@ func _lay_deck(game: Match) -> void:
 	for k in Match.HAND_SIZE:
 		for seat in seats:
 			order.append({"card": game.players[seat].hand[k], "seat": seat})
+	# With empty seats the undealt cards go to the pile at the table edge.
+	for card in game.middle():
+		var node := _make(card)
+		node.global_transform = _pile_slot(_pile.size())
+		_pile.append(node)
+	var deck := _deck_spot()
 	for i in order.size():
 		var node := _make(order[i]["card"])
 		var yaw := _rng.randf_range(-0.025, 0.025)
-		var pos := Vector3(0.0, _felt + LIFT + STACK * float(order.size() - 1 - i), 0.0)
-		node.global_transform = Transform3D(_face_down(Vector3.FORWARD.rotated(Vector3.UP, yaw)), pos)
+		var pos := deck + Vector3.UP * (LIFT + STACK * float(order.size() - 1 - i))
+		node.global_transform = Transform3D(_face_down(_toward_camera().rotated(Vector3.UP, yaw)), pos)
 		_dealing.append({"node": node, "seat": order[i]["seat"]})
 	_deal_clock = -0.4
+	if _dealer == null:
+		return
+	# The croupier deals them off the deck a card at a time, round the table,
+	# onto the felt before each player; with the last card down, everyone
+	# picks up their own pile.
+	var counts := {}
+	_deal_piles.clear()
+	_deal_left = _dealing.size()
+	for item in _dealing:
+		var node: Node3D = item["node"]
+		var seat := int(item["seat"])
+		var k := int(counts.get(seat, 0))
+		counts[seat] = k + 1
+		var spot := _deal_spot(seat, k)
+		_incoming[node] = true
+		_dealer.deal(node, spot.origin, _pitch.bind(node, seat, spot))
+	_dealing.clear()
+
+
+func _deal_spot(seat: int, k: int) -> Transform3D:
+	# The k-th card dealt to a seat: face down on the felt before the player,
+	# top edge toward the middle, on the pile with a little scatter.
+	var dir: Vector3 = _dirs[seat]
+	var side := Vector3.UP.cross(dir)
+	var pos := dir * (DEALT + _rng.randf_range(-0.007, 0.007)) + side * _rng.randf_range(-0.009, 0.009)
+	pos.y = _felt + LIFT + STACK * float(k)
+	var top := (-dir).rotated(Vector3.UP, _rng.randf_range(-0.13, 0.13))
+	return Transform3D(_face_down(top), pos)
+
+
+func _pitch(node: Node3D, seat: int, spot: Transform3D) -> void:
+	# Off the croupier's fingers low over the cloth, turning as it goes,
+	# and down onto the pile before its player.
+	if not is_instance_valid(node):
+		_incoming.erase(node)
+		_dealt(seat, null)
+		return
+	sound.emit("deal")
+	var way := _flat(spot.origin - node.global_position).length()
+	_move(node, spot, clampf(0.16 + way * 0.3, 0.2, 0.45), 0.045, _dealt.bind(seat, node), "out")
+
+
+func _dealt(seat: int, node: Node3D) -> void:
+	if node != null:
+		var pile: Array = _deal_piles.get(seat, [])
+		pile.append(node)
+		_deal_piles[seat] = pile
+	_deal_left -= 1
+	if _deal_left > 0:
+		return
+	# Everyone reaches for their own pile and lifts it into their hand.
+	for owner in _deal_piles:
+		var cards: Array = _deal_piles[owner]
+		if cards.is_empty() or not _actors.has(owner):
+			continue
+		var actor: Node3D = _actors[owner]
+		var top: Node3D = cards[cards.size() - 1]
+		actor.take_card(top, -1, func(_card):
+			for card in cards:
+				_incoming.erase(card)
+		, cards.slice(0, cards.size() - 1))
+	_deal_piles.clear()
 
 
 func _make(card) -> Node3D:
@@ -230,20 +331,109 @@ func _step_deal(delta: float) -> void:
 
 
 func _entry(played: Match.Played, node: Node3D) -> Dictionary:
-	var dir: Vector3 = _dirs[played.by]
-	var side := Vector3.UP.cross(dir)
-	var pos := dir * (SPOT + _rng.randf_range(-0.025, 0.03)) + side * _rng.randf_range(-0.045, 0.045)
-	pos += Vector3(_rng.randf_range(-0.018, 0.018), 0.0, _rng.randf_range(-0.018, 0.018))
-	pos.y = _felt + LIFT
-	var top := (-dir).rotated(Vector3.UP, _rng.randf_range(-0.55, 0.55))
+	# Each thrown card has its own corner of the round's square, so none
+	# lands on another.
+	if not _layout.has(played.by):
+		_lay_out()
 	return {
 		"id": int(played.card.id),
 		"by": played.by,
 		"node": node,
-		"spot": Transform3D(_face_down(top), pos),
-		"spin": _rng.randf_range(-0.45, 0.45),
+		"spot": _layout.get(played.by, _row_slot(0, 1, false)),
 		"state": "held",
 	}
+
+
+func _lay_out() -> void:
+	# Where this round's cards land: a loose square in the middle of the
+	# felt, each card in its thrower's corner, turned about the way it was
+	# thrown, no two touching; and the places in the row the croupier will
+	# line them up in. A layout with two cards touching, or that could not
+	# be lined up without pushing one across another, is thrown again; the
+	# last try has no scatter at all.
+	var seats: Array = _game.seated() if _game != null else _dirs.keys()
+	var corners := _corners(seats)
+	var toward := _toward_camera()
+	var right := (-toward).cross(Vector3.UP).normalized()
+	var tries := 24
+	for attempt in tries:
+		var scatter := 0.0 if attempt == tries - 1 else 1.0
+		var drift := (right * _rng.randf_range(-0.012, 0.012) + toward * _rng.randf_range(-0.012, 0.012)) * scatter
+		var spots := {}
+		var turned: Array = []
+		for seat in seats:
+			var corner: Vector2 = corners.get(seat, Vector2.ZERO)
+			var pos := Vector3(0.0, _felt + LIFT, 0.0) + drift
+			pos += right * (corner.x * SQUARE + _rng.randf_range(-0.014, 0.014) * scatter)
+			pos += toward * (corner.y * SQUARE + _rng.randf_range(-0.014, 0.014) * scatter)
+			var top: Vector3 = (-Vector3(_dirs[seat])).rotated(Vector3.UP, _rng.randf_range(-0.26, 0.26) * scatter)
+			spots[seat] = Transform3D(_face_down(top), pos)
+			turned.append({"entry": {}, "xf": _turned(spots[seat])})
+		_layout = spots
+		_places = _row_places(seats.size(), scatter)
+		if not _crowded(spots.values(), 0.012) and not _plan(turned, _places).is_empty():
+			return
+
+
+func _corners(seats: Array) -> Dictionary:
+	# Each seat's corner of the square: the one on its side of the table, no
+	# two sharing; of two ways that fit as well, the one where every card
+	# lands to its thrower's right, where a right hand tosses it.
+	var toward := _toward_camera()
+	var right := (-toward).cross(Vector3.UP).normalized()
+	var best := {}
+	var best_cost := INF
+	for order in _permutations(CORNERS.size()):
+		var cost := 0.0
+		var pick := {}
+		for i in mini(seats.size(), CORNERS.size()):
+			var corner: Vector2 = CORNERS[order[i]]
+			var dir: Vector3 = _dirs[seats[i]]
+			var off := wrapf(atan2(corner.x, corner.y) - atan2(dir.dot(right), dir.dot(toward)), -PI, PI)
+			cost += off * off - off * 0.001
+			pick[seats[i]] = corner
+		if cost < best_cost:
+			best_cost = cost
+			best = pick
+	return best
+
+
+func _permutations(n: int) -> Array:
+	# Every ordering of 0 .. n - 1.
+	if n <= 0:
+		return [[]]
+	var out: Array = []
+	for rest in _permutations(n - 1):
+		for at in range(rest.size() + 1):
+			var order: Array = rest.duplicate()
+			order.insert(at, n - 1)
+			out.append(order)
+	return out
+
+
+func _overlap(a: Transform3D, b: Transform3D, margin: float) -> bool:
+	# Whether two cards lying flat come within `margin` of each other, by
+	# their outlines seen from above.
+	var half := CardArt.SIZE * 0.5
+	var ax := Vector2(a.basis.x.x, a.basis.x.z).normalized()
+	var ay := Vector2(a.basis.y.x, a.basis.y.z).normalized()
+	var bx := Vector2(b.basis.x.x, b.basis.x.z).normalized()
+	var by := Vector2(b.basis.y.x, b.basis.y.z).normalized()
+	var gap := Vector2(b.origin.x - a.origin.x, b.origin.z - a.origin.z)
+	for axis in [ax, ay, bx, by]:
+		var reach_a := half.x * absf(ax.dot(axis)) + half.y * absf(ay.dot(axis))
+		var reach_b := half.x * absf(bx.dot(axis)) + half.y * absf(by.dot(axis))
+		if absf(gap.dot(axis)) > reach_a + reach_b + margin:
+			return false
+	return true
+
+
+func _crowded(spots: Array, margin: float) -> bool:
+	for i in spots.size():
+		for j in range(i + 1, spots.size()):
+			if _overlap(spots[i], spots[j], margin):
+				return true
+	return false
 
 
 func _follow_table(game: Match) -> void:
@@ -274,18 +464,22 @@ func _follow_table(game: Match) -> void:
 
 
 func _launch(entry: Dictionary) -> void:
+	# Off the hand in a low arc, turning as it flies, down a few centimetres
+	# short of its place and a short skid onto it, so it never slides
+	# across a card already lying on the felt.
 	var node: Node3D = entry["node"]
 	var spot: Transform3D = entry["spot"]
 	var by: int = entry["by"]
 	entry["state"] = "flying"
-	var lay := node.global_transform
-	lay.origin.y = spot.origin.y
-	var drop := clampf(node.global_position.y - spot.origin.y, 0.0, 0.2)
-	_move(node, lay, clampf(drop * 1.4, 0.04, 0.14), 0.0, func():
+	var way := _flat(spot.origin - node.global_position)
+	var skid := minf(0.035, way.length() * 0.3)
+	var land := spot.origin - (way.normalized() * skid if way.length() > 0.001 else Vector3.ZERO)
+	var spin := Basis(Vector3.UP, _rng.randf_range(-0.12, 0.12))
+	var air := clampf(0.12 + way.length() * 0.45, 0.14, 0.38)
+	_move(node, Transform3D(spin * spot.basis, land), air, 0.035, func():
 		sound.emit("card")
 		_glance_all(by, spot.origin)
-		var dist := node.global_position.distance_to(spot.origin)
-		_move(node, spot, clampf(dist * 0.85, 0.14, 0.4), 0.0, func(): entry["state"] = "landed", "out3")
+		_move(node, spot, 0.18, 0.0, func(): entry["state"] = "landed", "out3")
 	, "out")
 
 
@@ -295,11 +489,14 @@ func _follow_reveal(game: Match) -> void:
 	for entry in _entries:
 		if entry["state"] == "held" or entry["state"] == "flying":
 			return
+	if _dealer != null:
+		_deal_reveal()
+		return
 	for i in _entries.size():
 		var entry: Dictionary = _entries[i]
 		if entry["state"] != "landed" or not game.card_face_up(i):
 			continue
-		entry["state"] = "open"
+		entry["state"] = "lined"
 		var node: Node3D = entry["node"]
 		var from := node.global_transform
 		var read := node.global_position - _camera_home.origin
@@ -310,7 +507,208 @@ func _follow_reveal(game: Match) -> void:
 		sound.emit("flip")
 
 
+func _deal_reveal() -> void:
+	# The croupier turns the played cards over where they lie, in the order
+	# they were played, then lines them up in one row to be read across.
+	if _lined or _entries.is_empty():
+		return
+	_lined = true
+	var turned: Array = []
+	for entry in _entries:
+		var node: Node3D = entry["node"]
+		var up := _turned(node.global_transform)
+		entry["state"] = "turning"
+		_dealer.flip(node, up, func(): entry["state"] = "open")
+		turned.append({"entry": entry, "xf": up})
+	for step in _line_up(turned):
+		var entry: Dictionary = step["entry"]
+		var to: Transform3D = step["to"]
+		_dealer.slide(entry["node"], [to.origin], to, func(): entry["state"] = "lined")
+
+
+func _line_up(turned: Array) -> Array:
+	# The croupier's moves into the row (see _plan), in the places laid out
+	# with the round's square.
+	var count := turned.size()
+	var places := _places if _places.size() == count else _row_places(count)
+	var steps := _plan(turned, places)
+	if not steps.is_empty():
+		return steps
+	# No order clears every card (a layout from before a reload): left to
+	# right by where they lie.
+	var right := (-_toward_camera()).cross(Vector3.UP).normalized()
+	var ranks: Array = range(count)
+	ranks.sort_custom(func(a: int, b: int) -> bool:
+		return Transform3D(turned[a]["xf"]).origin.dot(right) < Transform3D(turned[b]["xf"]).origin.dot(right)
+	)
+	for i in count:
+		steps.append({"entry": turned[ranks[i]]["entry"], "to": places[i]})
+	return steps
+
+
+func _row_places(count: int, scatter := 1.0) -> Array:
+	# The row's places, each a touch off true, as a hand lays cards.
+	var places: Array = []
+	for i in count:
+		var place := _row_slot(i, count, true)
+		place.basis = Basis(Vector3.UP, _rng.randf_range(-0.025, 0.025) * scatter) * place.basis
+		place.origin += Vector3(_rng.randf_range(-0.004, 0.004), 0.0, _rng.randf_range(-0.004, 0.004)) * scatter
+		places.append(place)
+	return places
+
+
+func _plan(turned: Array, places: Array) -> Array:
+	# Which place in the row each turned card is pushed to, and in what
+	# order, so that none is pushed across another: every way of placing
+	# them is tried, a card going only once its straight way there is
+	# clear, and the shortest total wins. Empty if no way clears them all.
+	var count := turned.size()
+	var best: Array = []
+	var shortest := INF
+	for order in _permutations(count):
+		var steps := _clear_steps(turned, order, places)
+		if steps.is_empty():
+			continue
+		var length := 0.0
+		for i in count:
+			length += _flat(Transform3D(places[order[i]]).origin - Transform3D(turned[i]["xf"]).origin).length()
+		if length < shortest:
+			shortest = length
+			best = steps
+	return best
+
+
+func _clear_steps(turned: Array, order: Array, places: Array) -> Array:
+	# A move order for one placement, each card going once nothing lies in
+	# its way; empty if the cards would block each other.
+	var at: Array = []
+	for item in turned:
+		at.append(item["xf"])
+	var waiting: Array = range(turned.size())
+	var steps: Array = []
+	while not waiting.is_empty():
+		var go := -1
+		for k in waiting:
+			if _way_clear(k, at, places[order[k]]):
+				go = k
+				break
+		if go < 0:
+			return []
+		steps.append({"entry": turned[go]["entry"], "to": places[order[go]]})
+		at[go] = places[order[go]]
+		waiting.erase(go)
+	return steps
+
+
+func _way_clear(k: int, at: Array, to: Transform3D) -> bool:
+	# Whether card k can be pushed straight to `to`, turning as it goes,
+	# without touching any card where it lies now.
+	var from: Transform3D = at[k]
+	var turn_from := from.basis.get_rotation_quaternion()
+	var turn_to := to.basis.get_rotation_quaternion()
+	for step in range(1, 13):
+		var u := float(step) / 12.0
+		var xf := Transform3D(Basis(turn_from.slerp(turn_to, u)), from.origin.lerp(to.origin, u))
+		for j in at.size():
+			if j != k and _overlap(xf, at[j], 0.006):
+				return false
+	return true
+
+
+func _turned(xf: Transform3D) -> Transform3D:
+	# Face up where it lies: over side to side if its top edge already points
+	# away from the seated player, end to end if it points at them.
+	var keep := xf.basis.y.dot(-_toward_camera()) >= 0.0
+	var axis := (xf.basis.y if keep else xf.basis.x).normalized()
+	return Transform3D((Basis(axis, PI) * xf.basis).orthonormalized(), xf.origin)
+
+
+func resync(game: Match) -> void:
+	# Lays every card where the match says it is, dropping whatever was in
+	# flight; a last resort if an animation never reports back.
+	_rebuild(game)
+
+
+func reveal_ready() -> bool:
+	if _entries.is_empty():
+		return false
+	for entry in _entries:
+		if entry["state"] != "lined":
+			return false
+	return true
+
+
+func revealed() -> Array:
+	# What the seated player can read on the felt: each played card in the
+	# order played, who played it, whether it is face up and whether it has
+	# been lined up in the row, and where it sits on screen.
+	var out: Array = []
+	for entry in _entries:
+		var node: Node3D = entry["node"]
+		if not is_instance_valid(node):
+			continue
+		var at := node.global_position + _toward_camera() * 0.088
+		var on_screen := Vector2(-1, -1)
+		if _camera != null and not _camera.is_position_behind(at):
+			on_screen = _camera.unproject_position(at)
+		var value := 0
+		if _game != null:
+			for played in _game.table:
+				if int(played.card.id) == int(entry["id"]):
+					value = played.card.value()
+		var state := str(entry["state"])
+		out.append({"id": entry["id"], "by": entry["by"], "value": value, "up": state == "open" or state == "lined", "lined": state == "lined", "screen": on_screen})
+	return out
+
+
+func hurry(on: bool) -> void:
+	if _dealer != null:
+		_dealer.hurry = 3.0 if on else 1.0
+
+
+func _row_slot(i: int, count: int, up: bool) -> Transform3D:
+	var ahead := -_toward_camera()
+	var right := ahead.cross(Vector3.UP).normalized()
+	var pos := Vector3(0.0, _felt + LIFT, 0.0) + right * ((float(i) - float(count - 1) * 0.5) * ROW_GAP) - ahead * 0.1
+	return Transform3D(_face_up(ahead) if up else _face_down(ahead), pos)
+
+
+func _toward_camera() -> Vector3:
+	var flat := Vector3(_camera_home.origin.x, 0.0, _camera_home.origin.z)
+	return flat.normalized() if flat.length() > 0.01 else Vector3.BACK
+
+
+func _deck_spot() -> Vector3:
+	if _dealer == null:
+		return Vector3(0.0, _felt, 0.0)
+	var tray: Vector3 = _dealer.tray()
+	return Vector3(tray.x, _felt, tray.z)
+
+
+func _pile_center() -> Vector3:
+	# Beside the deck, along the rim, out of the way of the play.
+	if _dealer == null:
+		return Vector3(0.0, _felt, 0.0)
+	var deck := _deck_spot()
+	var along := Vector3.UP.cross(Vector3(deck.x, 0.0, deck.z).normalized())
+	return deck + along * 0.17
+
+
+func _handed_spot(owner: int, node: Node3D) -> Transform3D:
+	var dir: Vector3 = _dirs[owner]
+	var side := Vector3.UP.cross(dir)
+	var pos := dir * HANDED + side * _rng.randf_range(-0.04, 0.04)
+	pos.y = _felt + LIFT
+	var top := (-dir).rotated(Vector3.UP, _rng.randf_range(-0.15, 0.15))
+	return Transform3D(_face_up(top) if node.global_transform.basis.z.y > 0.0 else _face_down(top), pos)
+
+
 func _sweep(game: Match) -> void:
+	_layout.clear()
+	_places.clear()
+	if _dealer != null:
+		_dealer_sweep(game)
+		return
 	var taken := 0
 	var dropped := 0
 	for entry in _entries:
@@ -328,6 +726,62 @@ func _sweep(game: Match) -> void:
 			dropped += 1
 			_later(delay, _to_pile.bind(node, slot), node)
 	_entries.clear()
+
+
+func _dealer_sweep(game: Match) -> void:
+	# The croupier clears the row a card at a time so no card ever slides
+	# over another: first the rest onto the pile, nearest it first, then
+	# each drawn card across to whoever draws it, who picks it up.
+	var piled: Array = []
+	var drawn: Array = []
+	for entry in _entries:
+		var node: Node3D = entry["node"]
+		if not is_instance_valid(node):
+			continue
+		var owner := _owner_of(game, int(entry["id"]))
+		if owner >= 0:
+			drawn.append({"node": node, "owner": owner})
+		else:
+			piled.append(node)
+	var pile := _pile_center()
+	piled.sort_custom(func(a: Node3D, b: Node3D) -> bool:
+		return _flat(a.global_position - pile).length() < _flat(b.global_position - pile).length()
+	)
+	var base := _pile.size()
+	for k in piled.size():
+		var node: Node3D = piled[k]
+		var to := _pile_slot(base + k, node.global_transform.basis.z.y > 0.0)
+		var rise := to.origin.y - node.global_position.y
+		_incoming[node] = true
+		_dealer.slide(node, _route(node, to.origin), to, func():
+			_pile.append(node)
+			_incoming.erase(node)
+		, 0.012 + 1.2 * maxf(rise, 0.0))
+	for item in drawn:
+		var node: Node3D = item["node"]
+		var owner: int = item["owner"]
+		var actor: Node3D = _actors[owner]
+		var to := _handed_spot(owner, node)
+		_incoming[node] = true
+		_dealer.slide(node, _route(node, to.origin), to, func():
+			actor.take_card(node, -1 if owner == 0 else -2, func(_card): _incoming.erase(node))
+		)
+	_entries.clear()
+	_lined = false
+
+
+func _route(node: Node3D, goal: Vector3) -> Array:
+	# Out of the row square to it, on the side the card is headed, far
+	# enough to clear the cards still lying there; then straight on.
+	var from := node.global_position
+	var ahead := -_toward_camera()
+	var out := ahead if (goal - from).dot(ahead) >= 0.0 else -ahead
+	var exit := from + out * (CardArt.SIZE.y + 0.04)
+	return [exit, Vector3(goal.x, from.y, goal.z)]
+
+
+func _flat(v: Vector3) -> Vector3:
+	return Vector3(v.x, 0.0, v.z)
 
 
 func _hand_over(node: Node3D, owner: int) -> void:
@@ -362,10 +816,11 @@ func _to_pile(node: Node3D, slot: int) -> void:
 	sound.emit("deal")
 
 
-func _pile_slot(slot: int) -> Transform3D:
+func _pile_slot(slot: int, up := false) -> Transform3D:
 	var yaw := _rng.randf_range(-0.14, 0.14)
-	var pos := Vector3(_rng.randf_range(-0.01, 0.01), _felt + LIFT + STACK * float(slot), _rng.randf_range(-0.01, 0.01))
-	return Transform3D(_face_down(Vector3.FORWARD.rotated(Vector3.UP, yaw)), pos)
+	var pos := _pile_center() + Vector3(_rng.randf_range(-0.01, 0.01), LIFT + STACK * float(slot), _rng.randf_range(-0.01, 0.01))
+	var top := _toward_camera().rotated(Vector3.UP, PI + yaw)
+	return Transform3D(_face_up(top) if up else _face_down(top), pos)
 
 
 func _owner_of(game: Match, id: int) -> int:
@@ -395,10 +850,22 @@ func _idle() -> bool:
 	return true
 
 
+func _keeps_fan(game: Match, id: int) -> bool:
+	# A player who lost the throw holds their cards until the fist lands.
+	var actor: Node3D = _actors[id]
+	return game.players[id].out and not actor.gone and not actor.punched
+
+
 func _reconcile(game: Match) -> void:
 	if not _idle():
 		return
+	var kept: Array = []
 	for player in game.players:
+		if _keeps_fan(game, player.id):
+			kept.append_array(_actors[player.id].fan)
+	for player in game.players:
+		if _keeps_fan(game, player.id):
+			continue
 		var actor: Node3D = _actors[player.id]
 		var want: Array = []
 		for card in player.hand:
@@ -423,11 +890,21 @@ func _reconcile(game: Match) -> void:
 		if not middle.has(node):
 			_pile.erase(node)
 	for node in middle:
-		if not _pile.has(node):
+		if not _pile.has(node) and not kept.has(node):
 			for actor in _actors.values():
 				actor.remove_from_fan(node)
 			_move(node, _pile_slot(_pile.size()), 0.4, 0.03, Callable())
 			_pile.append(node)
+
+
+func hop() -> void:
+	# Everything lying on the felt jumps when a fist hits the table.
+	for node in _pile:
+		if is_instance_valid(node) and not _moves.has(node):
+			var to: Transform3D = node.global_transform
+			to.basis = Basis(Vector3.UP, _rng.randf_range(-0.05, 0.05)) * to.basis
+			_move(node, to, 0.2, _rng.randf_range(0.006, 0.016), Callable(), "out")
+	_token_hop = 1.0
 
 
 func _select(game: Match) -> void:
@@ -450,8 +927,18 @@ func _attention(game: Match) -> void:
 	if over and not game.standings.is_empty():
 		winner = int(game.standings[0].id)
 	var arriving := not _dealing.is_empty()
+	if _dealer != null and not _dealer.busy():
+		# Between jobs the croupier watches whoever is to play, or the felt.
+		var watch := center
+		if acting == 0:
+			watch = eye
+		elif acting > 0 and _actors.has(acting):
+			watch = _actors[acting].head_point()
+		_dealer.look_point = _dealer.look_point.lerp(watch, 0.08)
 	for id in _actors:
 		var actor: Node3D = _actors[id]
+		if actor.gone or actor.leaving():
+			continue
 		actor.watching = reveal or over
 		if id == 0:
 			actor.thinking = game.human_turn() and not busy()
@@ -500,19 +987,32 @@ func _glance_all(by: int, point: Vector3) -> void:
 
 
 func _place_token(game: Match, delta: float) -> void:
+	# The holder's button lies on the felt before the holder, off to their
+	# right; when the holder changes the croupier pushes it across to the
+	# next one, the way a dealer moves the button on at a card room table.
 	if not _dirs.has(game.holder):
 		return
 	_token.visible = true
-	var dir_goal: Vector3 = _dirs[game.holder]
-	var goal := atan2(dir_goal.x, dir_goal.z)
-	if _token_holder < 0:
-		_token_angle = goal
+	_token_hop = maxf(0.0, _token_hop - delta * 4.5)
+	if _token_moving:
+		return
+	var basis := _token_basis()
+	var dir: Vector3 = _dirs[game.holder]
+	var spot := dir * TOKEN + Vector3.UP.cross(dir) * 0.14 + Vector3(0.0, _felt, 0.0)
+	if _token_holder >= 0 and game.holder != _token_holder and _dealer != null:
+		_token_holder = game.holder
+		_token_moving = true
+		_dealer.slide(_token, [spot], Transform3D(basis, spot), func(): _token_moving = false)
+		return
 	_token_holder = game.holder
-	_token_angle += wrapf(goal - _token_angle, -PI, PI) * (1.0 - exp(-2.6 * delta))
-	var dir := Vector3(sin(_token_angle), 0.0, cos(_token_angle))
-	var right := Vector3.UP.cross(dir)
-	_token.global_position = dir * TOKEN + right * 0.14 + Vector3(0.0, _felt, 0.0)
-	_token.rotation = Vector3(0.0, _token_angle, 0.0)
+	var jump := 0.014 * sin(PI * (1.0 - _token_hop)) if _token_hop > 0.0 else 0.0
+	_token.global_transform = Transform3D(basis, spot + Vector3.UP * jump)
+
+
+func _token_basis() -> Basis:
+	# The crown on the button reads upright from the seated player's chair.
+	var toward := _toward_camera()
+	return Basis(Vector3.UP, atan2(toward.x, toward.z))
 
 
 func _place_turn(game: Match, delta: float) -> void:
@@ -664,30 +1164,81 @@ func _face_up(top: Vector3) -> Basis:
 
 
 func _make_token() -> Node3D:
+	# The holder's button: an ivory puck like a dealer's button, a gold rim
+	# and a gold crown inlaid on top, the crown the screen shows beside the
+	# holder's name. It takes the cards' light so the lamp does not burn it.
 	var root := Node3D.new()
-	root.name = "HolderToken"
-	var disc := MeshInstance3D.new()
+	root.name = "HolderButton"
+	var ivory := (_art.edge_material as ShaderMaterial).duplicate() as ShaderMaterial
+	ivory.set_shader_parameter("tint", Color(0.93, 0.89, 0.8))
+	var puck := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.03
-	mesh.bottom_radius = 0.031
-	mesh.height = 0.007
-	mesh.radial_segments = 40
+	mesh.top_radius = 0.037
+	mesh.bottom_radius = 0.038
+	mesh.height = 0.009
+	mesh.radial_segments = 48
 	mesh.rings = 1
-	var brass := StandardMaterial3D.new()
-	brass.albedo_color = Color(0.74, 0.58, 0.28)
-	brass.metallic = 0.8
-	brass.roughness = 0.34
-	mesh.material = brass
-	disc.mesh = mesh
-	disc.position.y = 0.0035
-	root.add_child(disc)
-	var mark := Label3D.new()
-	mark.text = "30"
-	mark.font_size = 72
-	mark.pixel_size = 0.00042
-	mark.outline_size = 0
-	mark.modulate = Color(0.2, 0.12, 0.05)
-	mark.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
-	mark.position.y = 0.0074
-	root.add_child(mark)
+	mesh.material = ivory
+	puck.mesh = mesh
+	puck.position.y = 0.0045
+	root.add_child(puck)
+	var gold := StandardMaterial3D.new()
+	gold.albedo_color = Color(0.8, 0.66, 0.4)
+	gold.metallic = 0.75
+	gold.roughness = 0.38
+	gold.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var rim := MeshInstance3D.new()
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.0315
+	ring.outer_radius = 0.0348
+	ring.rings = 48
+	ring.ring_segments = 8
+	ring.material = gold
+	rim.mesh = ring
+	rim.scale = Vector3(1.0, 0.3, 1.0)
+	rim.position.y = 0.0091
+	root.add_child(rim)
+	var crown := MeshInstance3D.new()
+	crown.mesh = _crown_mesh(0.041, gold)
+	crown.position.y = 0.0092
+	root.add_child(crown)
+	var garnet := StandardMaterial3D.new()
+	garnet.albedo_color = Color(0.62, 0.1, 0.08)
+	garnet.roughness = 0.3
+	for jewel in TitleScreen.Crown.jewels(Vector2(0.0, 0.003), 0.041):
+		var stone := MeshInstance3D.new()
+		var bead := CylinderMesh.new()
+		bead.top_radius = 0.0025
+		bead.bottom_radius = 0.0025
+		bead.height = 0.0008
+		bead.radial_segments = 12
+		bead.rings = 1
+		bead.material = garnet
+		stone.mesh = bead
+		stone.position = Vector3(jewel.x, 0.0096, jewel.y)
+		root.add_child(stone)
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		(node as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	puck.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	return root
+
+
+func _crown_mesh(width: float, mat: Material) -> ArrayMesh:
+	# The screen's crown outline, laid flat: its points away from the
+	# seated player once the button is turned to face them.
+	var outline := TitleScreen.Crown.points(Vector2(0.0, 0.003), width)
+	var order := Geometry2D.triangulate_polygon(outline)
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	for i in order:
+		verts.append(Vector3(outline[i].x, 0.0, outline[i].y))
+		normals.append(Vector3.UP)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, mat)
+	return mesh
+

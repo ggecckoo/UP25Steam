@@ -19,8 +19,8 @@ extends Resource
 @export var look_pitch_min := -0.48
 @export var look_pitch_max := 0.62
 @export var inspect_pitch := -0.16
-@export var reveal_pitch := -0.07
-@export var reveal_dolly := 0.06
+@export var reveal_pitch := -0.1
+@export var reveal_dolly := 0.12
 @export var body_follow := 0.22
 
 @export_group("Look")
@@ -42,7 +42,7 @@ extends Resource
 @export var lamp_energy := 3.6
 @export var lamp_angle := 48.0
 @export var ambient_color := Color(0.4, 0.29, 0.2, 1.0)
-@export var ambient_energy := 0.74
+@export var ambient_energy := 0.95
 @export var fill_energy := 0.36
 @export var glow_strength := 0.14
 @export var contrast := 1.03

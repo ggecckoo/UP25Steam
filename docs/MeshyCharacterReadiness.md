@@ -18,3 +18,9 @@ Doku: albedo var. Ayrı metalik/pürüz haritası yok; kumaş `seat_actor` için
 Final el pozu için her elde başparmak ve en az üç parmak kemiği, skin weight ile. Yüz için ya blendshape (göz kırpma, çene) ya da göz ve çene kemiği. İkisi de yoksa kırpma ve ağız hareketi yapılmaz. Kulak ve kuyruk ayrı kemiğe bağlanırsa ikincil hareket eklenebilir; şu an yok.
 
 Bu adım Godot içinde tamamlanamaz. Mixamo veya Meshy rig dışarıda üretilip aynı kemik adlarıyla yeniden içeri alınmalıdır.
+
+## Krupiye (kul)
+
+Meshy'nin otomatik rigi kuş anatomisinde başarısız olduğu için karga `tools/rig_dealer.py` ile riglenir: A-pozdaki `kul.glb` 1,55 m'ye ölçeklenir, yukarıdaki 24 kemik aynı adlarla elle yerleştirilir (her kemiğin +Y'si çocuğuna bakar), ağırlıklar bölge bölge zarf yöntemiyle boyanır. Çıktı `godot/assets/characters/krupiye.glb`; yeniden üretince `Godot --headless --path godot --import` ile içe aktar. Sahnede `godot/scripts/dealer.gd` sürer.
+
+Masadaki oyuncuların elleri artık Meshy pençesi değil, `fp_hands.gd`'deki parmaklı ellerdir; kürk rengi her karakterin kendi pençe dokusundan örneklenir.

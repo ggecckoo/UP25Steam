@@ -116,7 +116,8 @@
     "verdict.cap %@": "EXACT 80 — EVERYONE BUT %@ DRAWS 1 CARD",
     "verdict.exact %@": "EXACT 30 — EVERYONE BUT %@ DRAWS 1 CARD",
     "verdict.over %@": "30 CLEARED — %@ DRAWS NONE",
-    "verdict.under %@": "SHORT — %@ DRAWS 1"
+    "verdict.under %@": "SHORT — %@ DRAWS 1",
+    "menu.cast": "Your seat"
   },
   "tr": {
     "a11y.card %@ %@ %lld": "%1$@ %2$@, değer %3$lld",
@@ -235,7 +236,8 @@
     "verdict.cap %@": "TAM 80 — %@ HARİÇ HERKES 1 KART ÇEKİYOR",
     "verdict.exact %@": "TAM 30 — %@ HARİÇ HERKES 1 KART ÇEKİYOR",
     "verdict.over %@": "30 AŞILDI — %@ KART ÇEKMİYOR",
-    "verdict.under %@": "YETMEDİ — %@ 1 KART ÇEKİYOR"
+    "verdict.under %@": "YETMEDİ — %@ 1 KART ÇEKİYOR",
+    "menu.cast": "Senin yerin"
   },
   "es": {
     "a11y.card %@ %@ %lld": "%1$@ de %2$@, valor %3$lld",
@@ -354,7 +356,8 @@
     "verdict.cap %@": "EXACTO 80 — TODOS MENOS %@ ROBAN 1 CARTA",
     "verdict.exact %@": "EXACTO 30 — TODOS MENOS %@ ROBAN 1 CARTA",
     "verdict.over %@": "30 SUPERADO — %@ NO ROBA",
-    "verdict.under %@": "INSUFICIENTE — %@ ROBA 1"
+    "verdict.under %@": "INSUFICIENTE — %@ ROBA 1",
+    "menu.cast": "Tu lugar"
   },
   "zh-Hans": {
     "a11y.card %@ %@ %lld": "%2$@ %1$@，点数 %3$lld",
@@ -473,7 +476,8 @@
     "verdict.cap %@": "正好80 — 除%@外每人抽1张牌",
     "verdict.exact %@": "正好30 — 除%@外每人抽1张牌",
     "verdict.over %@": "已过30 — %@ 不抽牌",
-    "verdict.under %@": "未到 — %@ 抽1张"
+    "verdict.under %@": "未到 — %@ 抽1张",
+    "menu.cast": "你的座位"
   },
   "hi": {
     "a11y.card %@ %@ %lld": "%2$@ का %1$@, मान %3$lld",
@@ -592,7 +596,8 @@
     "verdict.cap %@": "ठीक 80 — %@ को छोड़ सब 1 कार्ड खींचते हैं",
     "verdict.exact %@": "ठीक 30 — %@ को छोड़ सब 1 कार्ड खींचते हैं",
     "verdict.over %@": "30 पार — %@ कार्ड नहीं लेता",
-    "verdict.under %@": "कम पड़ा — %@ 1 कार्ड लेता है"
+    "verdict.under %@": "कम पड़ा — %@ 1 कार्ड लेता है",
+    "menu.cast": "तुम्हारी जगह"
   },
   "ar": {
     "a11y.card %@ %@ %lld": "%1$@ من %2$@، القيمة %3$lld",
@@ -711,7 +716,8 @@
     "verdict.cap %@": "تمامًا 80 — الجميع عدا %@ يسحبون بطاقة واحدة",
     "verdict.exact %@": "تمامًا 30 — الجميع عدا %@ يسحبون بطاقة واحدة",
     "verdict.over %@": "تم تجاوز 30 — %@ لا يسحب",
-    "verdict.under %@": "غير كافٍ — %@ يسحب 1"
+    "verdict.under %@": "غير كافٍ — %@ يسحب 1",
+    "menu.cast": "مقعدك"
   },
   "pt-BR": {
     "a11y.card %@ %@ %lld": "%1$@ de %2$@, valor %3$lld",
@@ -830,7 +836,8 @@
     "verdict.cap %@": "EXATO 80 — TODOS MENOS %@ COMPRAM 1 CARTA",
     "verdict.exact %@": "EXATO 30 — TODOS MENOS %@ COMPRAM 1 CARTA",
     "verdict.over %@": "30 ULTRAPASSADO — %@ NÃO COMPRA",
-    "verdict.under %@": "FALTOU — %@ COMPRA 1"
+    "verdict.under %@": "FALTOU — %@ COMPRA 1",
+    "menu.cast": "Seu lugar"
   },
   "fr": {
     "a11y.card %@ %@ %lld": "%1$@ de %2$@, valeur %3$lld",
@@ -949,7 +956,8 @@
     "verdict.cap %@": "EXACT 80 — TOUS SAUF %@ PIOCHENT 1 CARTE",
     "verdict.exact %@": "EXACT 30 — TOUS SAUF %@ PIOCHENT 1 CARTE",
     "verdict.over %@": "30 DÉPASSÉ — %@ NE PIOCHE PAS",
-    "verdict.under %@": "INSUFFISANT — %@ PIOCHE 1"
+    "verdict.under %@": "INSUFFISANT — %@ PIOCHE 1",
+    "menu.cast": "Ta place"
   },
   "de": {
     "a11y.card %@ %@ %lld": "%1$@ %2$@, Wert %3$lld",
@@ -1068,7 +1076,8 @@
     "verdict.cap %@": "GENAU 80 — ALLE AUSSER %@ ZIEHEN 1 KARTE",
     "verdict.exact %@": "GENAU 30 — ALLE AUSSER %@ ZIEHEN 1 KARTE",
     "verdict.over %@": "30 ÜBERSCHRITTEN — %@ ZIEHT NICHT",
-    "verdict.under %@": "ZU WENIG — %@ ZIEHT 1"
+    "verdict.under %@": "ZU WENIG — %@ ZIEHT 1",
+    "menu.cast": "Dein Platz"
   },
   "ja": {
     "a11y.card %@ %@ %lld": "%2$@の%1$@、点数%3$lld",
@@ -1187,6 +1196,7 @@
     "verdict.cap %@": "ぴったり80 — %@以外が1枚引く",
     "verdict.exact %@": "ぴったり30 — %@以外が1枚引く",
     "verdict.over %@": "30超え — %@ は引かない",
-    "verdict.under %@": "足りない — %@ が1枚引く"
+    "verdict.under %@": "足りない — %@ が1枚引く",
+    "menu.cast": "あなたの席"
   }
 }

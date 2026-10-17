@@ -1,14 +1,9 @@
 extends Control
 
+const TitleScreen := preload("res://scripts/title_screen.gd")
+const TableHud := preload("res://scripts/table_hud.gd")
+const HandIcons := preload("res://scripts/hand_icons.gd")
 const SAVE_PATH := "user://25-40-save.json"
-
-const FELT_LIT := Color("1E6E52")
-const PANEL := Color("082C22")
-const BRASS := Color("C9A44C")
-const BRASS_HI := Color("F0DA9E")
-const IVORY := Color("F7F2E4")
-const IVORY_DIM := Color(0.97, 0.95, 0.89, 0.75)
-const INK := Color("1B1712")
 
 const SCREEN_MENU := 0
 const SCREEN_HOW := 1
@@ -20,21 +15,24 @@ const SCREEN_OVER := 5
 var text := TextBank.new()
 var game: Match
 var screen := SCREEN_MENU
-var focus_index := 0
 var card_index := 0
 var queued_play := -1
 var turn_token := -1
 var how_from := SCREEN_MENU
 var last_sig := ""
-var buttons: Array = []
 var sounds: Dictionary = {}
 var world: Node3D
-var hud: Control
+var title: Control
+var chosen_preset := ""
 var port: SubViewport
-var _name_labels: Dictionary = {}
 var _look_held := false
 var _debug := false
 var _debug_label: Label
+var _curtain: ColorRect
+var table_hud: Control
+var _held_for := 0.0
+var hand_icons: Node
+var _duel_cue := ""
 
 
 func _ready() -> void:
@@ -47,27 +45,44 @@ func _ready() -> void:
 	_add_sound("card", _noise(0.11, 46.0, 0.28, 0.95, 11), -4.0)
 	_add_sound("flip", _noise(0.06, 85.0, 0.7, 0.6, 23), -9.0)
 	_add_sound("deal", _noise(0.045, 105.0, 0.5, 0.42, 37), -15.0)
+	_add_sound("thump", _noise(0.34, 13.0, 0.05, 1.0, 51), 2.0)
+	_add_sound("door", _noise(0.42, 10.0, 0.035, 0.95, 67), -3.0)
 	_mount_world()
 	get_viewport().size_changed.connect(_on_view_resized)
 	_rebuild()
 
 
 func _process(delta: float) -> void:
-	var wait := world != null and game.phase == Match.PHASE_PLAYING and bool(world.call("busy"))
+	# The room holds the match while cards move and while someone walks out.
+	var held := game.phase == Match.PHASE_PLAYING or game.phase == Match.PHASE_DUEL
+	# Until the croupier has every played card face up, the total waits.
+	var turning := game.phase == Match.PHASE_REVEAL and not game.sum_shown
+	var wait := world != null and (held or turning) and bool(world.call("busy"))
+	# Nothing legitimate keeps the table busy this long (a walk-out takes
+	# under ten seconds); if it happens, lay the cards out from the match.
+	_held_for = _held_for + delta if wait else 0.0
+	if _held_for > 20.0:
+		_held_for = 0.0
+		world.call("resync", game)
 	if not wait:
 		game.tick(delta)
+	if turning and world != null and not game.sum_shown and bool(world.call("reveal_ready")):
+		game.skip_reveal()
+		world.call("hurry", false)
+	_cue_duel()
+	if _curtain != null and world != null and world.has_method("blackout"):
+		_curtain.color.a = float(world.call("blackout"))
 	if world != null and world.has_method("sync_match"):
 		var in_match := screen == SCREEN_PLAY or screen == SCREEN_PAUSE or screen == SCREEN_OVER
 		world.call("select_card", card_index if game.human_turn() else -1)
 		world.call("sync_match", game, in_match, delta)
 	_flush_play()
 	_fit_view()
+	_sync_title()
 	if (screen == SCREEN_PLAY or screen == SCREEN_PAUSE) and game.phase == Match.PHASE_OVER:
 		screen = SCREEN_OVER
-		focus_index = 0
 	elif (screen == SCREEN_PLAY or screen == SCREEN_PAUSE) and game.phase == Match.PHASE_MENU:
 		screen = SCREEN_MENU
-		focus_index = 0
 	if game.human_turn() and game.turn_token() != turn_token:
 		turn_token = game.turn_token()
 		card_index = game.players[0].hand.size() - 1 if game.holder == 0 else 0
@@ -75,7 +90,8 @@ func _process(delta: float) -> void:
 	if sig != last_sig:
 		last_sig = sig
 		_rebuild()
-	_track_names()
+	if table_hud != null:
+		table_hud.sync(game, screen == SCREEN_PLAY, delta)
 	_track_debug()
 
 
@@ -85,51 +101,67 @@ func _unhandled_input(event: InputEvent) -> void:
 		var next := DisplayServer.WINDOW_MODE_WINDOWED if mode == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN
 		DisplayServer.window_set_mode(next)
 		return
-	if screen == SCREEN_HOW:
-		_input_how(event)
-		return
-	if screen == SCREEN_PLAY:
+	if screen == SCREEN_MENU:
+		_input_menu(event)
+	elif screen == SCREEN_PLAY:
 		_input_play(event)
-		return
-	if event.is_action_pressed("ui_cancel"):
-		if screen == SCREEN_PAUSE:
-			_resume()
-		elif screen == SCREEN_LANG:
-			screen = SCREEN_MENU
-			focus_index = 0
-		elif screen == SCREEN_PLAY:
-			_open_pause()
-		elif screen == SCREEN_OVER:
-			_to_menu()
-		_refresh()
+	else:
+		_input_sheet(event)
+
+
+func _input_menu(event: InputEvent) -> void:
+	if title == null:
 		return
 	if event.is_action_pressed("ui_up"):
-		_move_focus(-1)
+		title.move_focus(-1)
 	elif event.is_action_pressed("ui_down"):
-		_move_focus(1)
-	elif event.is_action_pressed("ui_accept") and not buttons.is_empty():
-		buttons[clampi(focus_index, 0, buttons.size() - 1)].emit_signal("pressed")
+		title.move_focus(1)
+	elif event.is_action_pressed("ui_left"):
+		title.cycle_pick(-1)
+	elif event.is_action_pressed("ui_right"):
+		title.cycle_pick(1)
+	elif event.is_action_pressed("ui_accept"):
+		title.activate_focus()
 
 
-func _input_how(event: InputEvent) -> void:
+func _input_sheet(event: InputEvent) -> void:
+	# The screens around the game stand on the menu's stage: arrows move
+	# along its entries (on the rules they scroll), Enter takes the one in
+	# focus and Esc steps back.
+	if title == null:
+		return
 	if event.is_action_pressed("ui_cancel"):
-		screen = how_from
-		focus_index = 0
-		_refresh()
+		_menu_activate(_back_id())
 	elif event.is_action_pressed("ui_up"):
-		var scroll := hud.get_node_or_null("HowScroll") as ScrollContainer
-		if scroll:
-			scroll.scroll_vertical = maxi(0, scroll.scroll_vertical - 48)
+		if screen == SCREEN_HOW:
+			title.scroll(-1)
+		else:
+			title.move_focus(-1)
 	elif event.is_action_pressed("ui_down"):
-		var scroll := hud.get_node_or_null("HowScroll") as ScrollContainer
-		if scroll:
-			scroll.scroll_vertical += 48
+		if screen == SCREEN_HOW:
+			title.scroll(1)
+		else:
+			title.move_focus(1)
+	elif event.is_action_pressed("ui_accept"):
+		title.activate_focus()
+
+
+func _back_id() -> String:
+	match screen:
+		SCREEN_PAUSE:
+			return "resume"
+		SCREEN_OVER:
+			return "menu"
+	return "back"
 
 
 func _input_play(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE):
 		_open_pause()
 		_refresh()
+		return
+	if game.phase == Match.PHASE_DUEL:
+		_input_duel(event)
 		return
 	var hand_size := 0
 	if not game.players.is_empty():
@@ -139,7 +171,7 @@ func _input_play(event: InputEvent) -> void:
 			_look_held = false
 			return
 		if game.phase == Match.PHASE_REVEAL:
-			game.skip_reveal()
+			_hurry_reveal()
 			_refresh()
 			return
 		var clicked := _card_at(event.position)
@@ -175,7 +207,7 @@ func _input_play(event: InputEvent) -> void:
 		card_index = wrapi(card_index + 1, 0, maxi(hand_size, 1))
 	elif event.is_action_pressed("ui_accept"):
 		if game.phase == Match.PHASE_REVEAL:
-			game.skip_reveal()
+			_hurry_reveal()
 		else:
 			_play(card_index)
 		_refresh()
@@ -185,6 +217,66 @@ func _input_play(event: InputEvent) -> void:
 			card_index = digit
 			_play(digit)
 			_refresh()
+
+
+func _input_duel(event: InputEvent) -> void:
+	# 1/2/3, or arrows and Enter, or a click on a panel pick a throw; nothing
+	# is picked in advance, so every throw is chosen afresh. Otherwise a
+	# click or Enter hurries the duel along, and dragging still looks around.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_look_held = event.pressed
+		if event.pressed and not game.choosing():
+			game.skip_duel()
+			_refresh()
+		return
+	if event is InputEventMouseMotion:
+		if _look_held and world != null and world.has_method("add_look"):
+			world.call("add_look", event.relative)
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		var digit: int = int(event.keycode) - KEY_1
+		if digit >= 0 and digit <= 2:
+			_throw(digit)
+			return
+	if event.is_action_pressed("ui_left") or event.is_action_pressed("ui_up"):
+		table_hud.move_focus(-1)
+	elif event.is_action_pressed("ui_right") or event.is_action_pressed("ui_down"):
+		table_hud.move_focus(1)
+	elif event.is_action_pressed("ui_accept"):
+		if game.choosing():
+			table_hud.confirm()
+		else:
+			game.skip_duel()
+			_refresh()
+
+
+func _hurry_reveal() -> void:
+	# The croupier works faster; once the cards are up, on to the verdict.
+	if world != null and not game.sum_shown and not bool(world.call("reveal_ready")):
+		world.call("hurry", true)
+		return
+	game.skip_reveal()
+
+
+func _throw(choice: int) -> void:
+	if game.choose_throw(choice):
+		_on_card_sound("deal")
+		table_hud.reset_focus()
+	_refresh()
+
+
+func _cue_duel() -> void:
+	# A tap on each word of the chant and a slap when the hands land.
+	var cue := ""
+	if game.phase == Match.PHASE_DUEL:
+		cue = "%d:%d:%d:%d" % [game.hand_no, game.duel_ties, game.duel_stage, game.duel_beat()]
+	if cue == _duel_cue:
+		return
+	_duel_cue = cue
+	if game.duel_beat() >= 0:
+		_on_card_sound("flip")
+	elif game.phase == Match.PHASE_DUEL and game.duel_stage == Match.DUEL_SHOW:
+		_on_card_sound("card")
 
 
 func _track_debug() -> void:
@@ -243,10 +335,11 @@ func _flush_play() -> void:
 
 
 func _signature() -> String:
-	return "%d|%d|%d|%d|%s|%s|%s|%d|%d|%d" % [
+	return "%d|%d|%d|%d|%s|%s|%s|%d|%d|%d|%d|%d|%d|%d|%d|%s" % [
 		screen, game.phase, game.round_no, game.table.size(),
-		game.sum_shown, game.paused, text.lang, focus_index,
-		game.acting(), game.holder,
+		game.sum_shown, game.paused, text.lang, int(game.sound_on),
+		game.acting(), game.holder, game.hand_no, game.duel_stage,
+		game.duel_beat(), game.duel_throws.size(), 0, game.choosing(),
 	]
 
 
@@ -268,17 +361,34 @@ func _mount_world() -> void:
 	port.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	port.handle_input_locally = false
 	view.add_child(port)
+	_curtain = ColorRect.new()
+	_curtain.name = "Curtain"
+	_curtain.set_anchors_preset(PRESET_FULL_RECT)
+	_curtain.mouse_filter = MOUSE_FILTER_IGNORE
+	_curtain.color = Color(0.0, 0.0, 0.0, 0.0)
+	add_child(_curtain)
 	var packed: PackedScene = load("res://scenes/room_preview.tscn")
 	world = packed.instantiate() as Node3D
 	world.set("play_mode", true)
 	port.add_child(world)
 	if world.has_signal("card_sound"):
 		world.connect("card_sound", _on_card_sound)
-	hud = Control.new()
-	hud.name = "Hud"
-	hud.set_anchors_preset(PRESET_FULL_RECT)
-	hud.mouse_filter = MOUSE_FILTER_IGNORE
-	add_child(hud)
+	if world.has_method("player_preset"):
+		chosen_preset = str(world.call("player_preset"))
+	title = TitleScreen.new()
+	title.name = "Title"
+	add_child(title)
+	title.activated.connect(_menu_activate)
+	title.picked.connect(func(preset: String) -> void: chosen_preset = preset)
+	title.sound.connect(_on_card_sound)
+	hand_icons = HandIcons.new()
+	hand_icons.name = "HandIcons"
+	add_child(hand_icons)
+	table_hud = TableHud.new()
+	table_hud.name = "TableHud"
+	add_child(table_hud)
+	table_hud.setup(text, hand_icons, world)
+	table_hud.chosen.connect(_throw)
 
 
 func _on_view_resized() -> void:
@@ -296,124 +406,69 @@ func _fit_view() -> void:
 	_refresh()
 
 
-func _adopt(node: Node) -> void:
-	hud.add_child(node)
-
-
 func _rebuild() -> void:
-	if hud == null:
-		return
-	for child in hud.get_children():
-		child.queue_free()
-	buttons = []
-	_name_labels.clear()
-	_room()
 	match screen:
 		SCREEN_MENU:
 			_build_menu()
-		SCREEN_HOW:
-			_build_how()
-		SCREEN_LANG:
-			_build_lang()
-		SCREEN_PLAY, SCREEN_PAUSE:
-			_build_play()
-			if screen == SCREEN_PAUSE:
-				_build_pause()
-		SCREEN_OVER:
-			_build_over()
-	if screen == SCREEN_MENU or screen == SCREEN_HOW or screen == SCREEN_LANG:
-		_legend()
+		SCREEN_HOW, SCREEN_LANG, SCREEN_PAUSE, SCREEN_OVER:
+			_build_sheet()
 
 
-func _room() -> void:
-	if screen == SCREEN_HOW or screen == SCREEN_LANG:
+func _sync_title() -> void:
+	if title == null:
 		return
-	if world == null or not world.has_method("seat_screen_pos"):
-		return
-	var winner := -1
-	if screen == SCREEN_OVER and not game.standings.is_empty():
-		winner = int(game.standings[0].id)
-	for id in [1, 2, 3]:
-		var pos: Vector2 = world.call("seat_screen_pos", id)
-		if pos.x < 0.0:
-			continue
-		var acting: bool = screen == SCREEN_PLAY and game.acting() == id
-		var color := BRASS_HI if acting or winner == id else IVORY_DIM
-		var label := _label(_caption(id), 18 if acting else 17, pos, color, HORIZONTAL_ALIGNMENT_CENTER)
-		_name_labels[id] = label
-
-
-func _caption(id: int) -> String:
-	if game.players.size() != 4 or screen == SCREEN_MENU:
-		return str(world.call("seat_caption", id))
-	var caption: String = game.players[id].player_name
-	var cards := int(world.call("fan_count", id))
-	if cards > 0:
-		caption += "  ·  %d" % cards
-	return caption
-
-
-func _track_names() -> void:
-	if world == null or not world.has_method("seat_screen_pos"):
-		return
-	for id in _name_labels:
-		var label: Label = _name_labels[id]
-		if not is_instance_valid(label):
-			continue
-		var pos: Vector2 = world.call("seat_screen_pos", id)
-		if pos.x < 0.0:
-			label.visible = false
-			continue
-		label.visible = true
-		label.position = Vector2(pos.x - 400.0, pos.y)
-		label.text = _caption(id)
-		var acting: bool = screen == SCREEN_PLAY and game.acting() == id
-		label.add_theme_color_override("font_color", BRASS_HI if acting else IVORY_DIM)
-		label.add_theme_font_size_override("font_size", 18 if acting else 17)
+	var mode := 0
+	if screen == SCREEN_MENU:
+		mode = 2
+	elif screen != SCREEN_PLAY:
+		mode = 1
+	title.set_mode(mode)
 
 
 func _build_menu() -> void:
-	_shade(Rect2(20, 8, 640, 168), 0.5)
-	_label(text.t("brand.name"), 42, Vector2(36, 18), BRASS_HI, HORIZONTAL_ALIGNMENT_LEFT)
-	_label(text.t("menu.tagline1"), 22, Vector2(36, 68), IVORY, HORIZONTAL_ALIGNMENT_LEFT)
-	_label(text.t("menu.tagline2"), 20, Vector2(36, 98), BRASS, HORIZONTAL_ALIGNMENT_LEFT)
-	_label(text.format_key("menu.stats %lld %lld", [game.games_finished, game.games_won]), 16, Vector2(36, 132), BRASS, HORIZONTAL_ALIGNMENT_LEFT)
-	var ids: Array = []
-	if game.can_resume():
-		ids.append("continue")
-	ids.append("new")
-	ids.append("how")
-	ids.append("lang")
-	ids.append("quit")
-	var y := 430.0
-	_shade(Rect2(400, y - 18, 480, ids.size() * 56 + 20), 0.66)
-	for i in ids.size():
-		var id: String = ids[i]
-		var caption := ""
-		match id:
-			"continue":
-				caption = text.t("menu.continue")
-			"new":
-				caption = text.t("menu.newGame") if game.can_resume() else text.t("menu.sit")
-			"how":
-				caption = text.t("howto.title")
-			"lang":
-				caption = text.t("language.title")
-			"quit":
-				caption = text.t("ui.quit")
-		_button(caption, Vector2(430, y), Vector2(420, 48), i == 0, i == focus_index, _menu_activate.bind(id))
-		y += 56
+	if title == null:
+		return
+	var resume: bool = game.can_resume()
+	var entries: Array = []
+	if resume:
+		entries.append(["continue", text.t("menu.continue"), true])
+	entries.append(["new", text.t("menu.newGame") if resume else text.t("menu.sit"), not resume])
+	entries.append(["how", text.t("howto.title"), false])
+	entries.append(["lang", text.t("language.title"), false])
+	entries.append(["quit", text.t("ui.quit"), false])
+	var roster: Array = []
+	if world != null and world.has_method("roster"):
+		roster = world.call("roster")
+	title.configure({
+		"screen": "menu",
+		"lang": text.lang,
+		"entries": entries,
+		"tagline": text.t("menu.tagline1") + " " + text.t("menu.tagline2"),
+		"record": text.t("menu.record"),
+		"stats": text.format_key("menu.stats %lld %lld", [game.games_finished, game.games_won]),
+		"cast": text.t("menu.cast"),
+		"legend": text.t("ui.legend"),
+		"roster": roster,
+		"picked": chosen_preset,
+	})
 
 
 func _menu_activate(id: String) -> void:
 	match id:
 		"continue":
+			_seat_player()
 			game.resume()
+			_apply_seat_names()
+			_warm_icons()
 			screen = SCREEN_PLAY
 			card_index = 0
 			turn_token = -1
 		"new":
+			_seat_player()
+			_reseat()
 			game.new_game()
+			_apply_seat_names()
+			_warm_icons()
 			screen = SCREEN_PLAY
 			card_index = 0
 			turn_token = -1
@@ -422,256 +477,181 @@ func _menu_activate(id: String) -> void:
 			screen = SCREEN_HOW
 		"lang":
 			screen = SCREEN_LANG
-			focus_index = 0
 		"quit":
 			get_tree().quit()
-	_refresh()
-
-
-func _build_how() -> void:
-	_veil()
-	_shade(Rect2(56, 92, 1168, 650), 0.96)
-	_label(text.t("howto.title"), 36, Vector2(640, 28), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
-	_back_button()
-	var scroll := ScrollContainer.new()
-	scroll.name = "HowScroll"
-	scroll.position = Vector2(80, 108)
-	scroll.size = Vector2(1120, 620)
-	_adopt(scroll)
-	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(1080, 0)
-	box.add_theme_constant_override("separation", 18)
-	scroll.add_child(box)
-	for i in range(1, 7):
-		var line := Label.new()
-		line.text = "%d.  %s" % [i, text.t("rules.%d" % i)]
-		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		line.custom_minimum_size = Vector2(1080, 0)
-		line.add_theme_font_size_override("font_size", 22)
-		line.add_theme_color_override("font_color", IVORY)
-		line.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if text.rtl() else HORIZONTAL_ALIGNMENT_LEFT
-		box.add_child(line)
-
-
-func _build_lang() -> void:
-	_veil()
-	_shade(Rect2(280, 88, 720, 660), 0.96)
-	_label(text.t("language.title"), 36, Vector2(640, 24), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
-	_back_button()
-	var y := 100.0
-	for i in TextBank.LANGUAGES.size():
-		var pair: Array = TextBank.LANGUAGES[i]
-		var current: bool = pair[0] == text.lang
-		_button(pair[1], Vector2(320, y), Vector2(640, 56), current, i == focus_index, _choose_language.bind(pair[0]))
-		y += 62
-
-
-func _build_play() -> void:
-	if game.players.size() < 4:
-		return
-	var view_size := get_viewport_rect().size
-	_label(text.format_key("game.round %lld %lld", [game.round_no, Match.ROUNDS]), 18, Vector2(view_size.x - 28, 16), BRASS_HI, HORIZONTAL_ALIGNMENT_RIGHT)
-	_label(game.status_text(), 20, Vector2(36, 16), IVORY, HORIZONTAL_ALIGNMENT_LEFT, 560)
-	var hint := game.hint_text()
-	if hint != "":
-		_label(hint, 16, Vector2(36, 48), IVORY_DIM, HORIZONTAL_ALIGNMENT_LEFT, 560)
-	var mid_x := view_size.x * 0.5
-	if game.sum_shown:
-		_label(text.t("game.tableTotal") + "  " + str(game.table_sum()), 24, Vector2(mid_x, 10), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
-	if game.verdict_text() != "":
-		_label(game.verdict_text(), 18, Vector2(mid_x, 44), IVORY, HORIZONTAL_ALIGNMENT_CENTER, 640)
-
-
-func _build_pause() -> void:
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.6)
-	dim.set_anchors_preset(PRESET_FULL_RECT)
-	dim.mouse_filter = MOUSE_FILTER_STOP
-	_adopt(dim)
-	var panel := Panel.new()
-	panel.position = Vector2(330, 390)
-	panel.size = Vector2(620, 360)
-	panel.add_theme_stylebox_override("panel", _panel_style(true))
-	_adopt(panel)
-	_label(text.t("pause.title"), 32, Vector2(640, 408), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
-	var sound_state := text.t("ui.on") if game.sound_on else text.t("ui.off")
-	var items := [
-		[text.t("pause.continue"), "resume"],
-		[text.t("howto.title"), "how"],
-		[text.t("settings.sound") + "  ·  " + sound_state, "sound"],
-		[text.t("pause.quit"), "quit"],
-	]
-	var y := 456.0
-	for i in items.size():
-		_button(items[i][0], Vector2(410, y), Vector2(460, 48), i == 0, i == focus_index, _pause_activate.bind(items[i][1]))
-		y += 56
-
-
-func _pause_activate(id: String) -> void:
-	match id:
+		"back":
+			screen = how_from if screen == SCREEN_HOW else SCREEN_MENU
 		"resume":
 			_resume()
-		"how":
+		"pause_how":
 			how_from = SCREEN_PAUSE
 			screen = SCREEN_HOW
 		"sound":
 			game.set_sound(not game.sound_on)
-		"quit":
+		"quit_match":
 			game.quit_match()
-			if game.phase == Match.PHASE_OVER:
-				screen = SCREEN_OVER
-			else:
+			screen = SCREEN_OVER if game.phase == Match.PHASE_OVER else SCREEN_MENU
+		"again":
+			_reseat()
+			game.new_game()
+			_apply_seat_names()
+			_warm_icons()
+			screen = SCREEN_PLAY
+			card_index = 0
+			turn_token = -1
+		"menu":
+			game.return_to_menu()
+			screen = SCREEN_MENU
+		_:
+			if id.begins_with("lang:"):
+				text.set_language(id.substr(5))
+				game._save()
 				screen = SCREEN_MENU
-			focus_index = 0
 	_refresh()
 
 
-func _veil() -> void:
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.84)
-	dim.set_anchors_preset(PRESET_FULL_RECT)
-	dim.mouse_filter = MOUSE_FILTER_STOP
-	_adopt(dim)
+func _seat_player() -> void:
+	if world == null or chosen_preset == "" or not world.has_method("set_player"):
+		return
+	if str(world.call("player_preset")) != chosen_preset:
+		world.call("set_player", chosen_preset)
 
 
-func _build_over() -> void:
-	_shade(Rect2(300, 360, 680, 410), 0.72)
-	_label(text.format_key("over.roundsDone %lld", [Match.ROUNDS]), 18, Vector2(640, 390), BRASS, HORIZONTAL_ALIGNMENT_CENTER)
-	if not game.standings.is_empty():
-		var top: Dictionary = game.standings[0]
-		_label(text.format_key("over.won %@", [top.name]), 32, Vector2(640, 418), IVORY, HORIZONTAL_ALIGNMENT_CENTER, 800)
-		_label(text.format_key("over.lightest %lld", [top.score]), 18, Vector2(640, 458), BRASS_HI, HORIZONTAL_ALIGNMENT_CENTER)
+func _reseat() -> void:
+	# Whoever walked out last sitting comes back for a new one.
+	if world != null and world.has_method("reset_seats"):
+		world.call("reset_seats")
+
+
+func _warm_icons() -> void:
+	# Each player's hand making the three throws, drawn ahead of any duel.
+	if hand_icons == null or world == null or not world.has_method("seat_preset"):
+		return
+	for id in Match.SEATS:
+		hand_icons.icons(str(world.call("seat_preset", id)))
+
+
+func _apply_seat_names() -> void:
+	if world == null or not world.has_method("seat_names") or game.players.size() != 4:
+		return
+	var names: Array = world.call("seat_names")
+	for i in mini(4, names.size()):
+		game.players[i].player_name = str(names[i])
+
+
+func _build_sheet() -> void:
+	# The rules, the languages, the pause and the end of a sitting, all on
+	# the menu's own stage (title_screen.gd): the same art, logo, type and
+	# entries, the players at the table dealt as its character cards.
+	if title == null:
+		return
+	var data := {
+		"lang": text.lang,
+		"rtl": text.rtl(),
+		"legend": text.t("ui.legend"),
+	}
+	match screen:
+		SCREEN_HOW:
+			var rules: Array = []
+			for i in range(1, 9):
+				rules.append(text.t("rules.%d" % i))
+			data["screen"] = "how"
+			data["tagline"] = text.t("howto.title")
+			data["rules"] = rules
+			data["entries"] = [["back", text.t("game.back"), true]]
+		SCREEN_LANG:
+			var entries: Array = []
+			for pair in TextBank.LANGUAGES:
+				entries.append(["lang:" + str(pair[0]), str(pair[1]), false, pair[0] == text.lang, true])
+			entries.append(["back", text.t("game.back"), false, false, true])
+			data["screen"] = "lang"
+			data["focus"] = maxi(0, TextBank.LANGUAGES.map(func(pair: Array) -> String: return str(pair[0])).find(text.lang))
+			data["tagline"] = text.t("language.title")
+			data["record"] = text.t("language.hint")
+			data["entries"] = entries
+		SCREEN_PAUSE:
+			var sound := text.t("ui.on") if game.sound_on else text.t("ui.off")
+			data["screen"] = "pause"
+			data["tagline"] = text.t("pause.title")
+			data["record"] = text.format_key("game.hand %lld", [game.hand_no]) + "  ·  " + text.format_key("game.round %lld %lld", [game.round_no, Match.ROUNDS])
+			data["entries"] = [
+				["resume", text.t("pause.continue"), true],
+				["pause_how", text.t("howto.title"), false],
+				["sound", text.t("settings.sound") + "  ·  " + sound, false],
+				["quit_match", text.t("pause.quit"), false],
+			]
+			data["cast"] = text.t("pause.table")
+			data["roster"] = _table_cards()
+		SCREEN_OVER:
+			data["screen"] = "over"
+			data["tagline"] = _verdict()
+			data["record"] = text.format_key("over.hands %lld", [game.hand_no])
+			data["entries"] = [["again", text.t("over.newGame"), true], ["menu", text.t("over.menu"), false]]
+			data["cast"] = text.t("over.standings")
+			data["roster"] = _standing_cards()
+	title.configure(data)
+
+
+func _table_cards() -> Array:
+	# Everyone still seated, with the cards they hold; the holder crowned.
+	var out: Array = []
+	for player in game.players:
+		if player.out:
+			continue
+		out.append({
+			"id": _portrait(player.id),
+			"name": player.player_name,
+			"note": text.format_key("hud.cards %lld", [player.hand.size()]),
+			"crowned": player.id == game.holder,
+			"pickable": false,
+		})
+	return out
+
+
+func _standing_cards() -> Array:
+	# The final standings, best first, with score or when they left; the
+	# last one at the table crowned.
+	var out: Array = []
 	for i in game.standings.size():
 		var row: Dictionary = game.standings[i]
-		var bg := ColorRect.new()
-		bg.position = Vector2(340, 490 + i * 36)
-		bg.size = Vector2(600, 32)
-		bg.color = Color("6E5320") if i == 0 else (FELT_LIT if row.id == 0 else Color(0, 0, 0, 0.28))
-		bg.mouse_filter = MOUSE_FILTER_IGNORE
-		_adopt(bg)
-		_label("%d   %s    %s" % [i + 1, row.name, str(row.score)], 18, Vector2(356, bg.position.y + 4), BRASS_HI if i == 0 else IVORY, HORIZONTAL_ALIGNMENT_LEFT)
-	_button(text.t("over.newGame"), Vector2(410, 650), Vector2(460, 48), true, focus_index == 0, func ():
-		game.new_game()
-		screen = SCREEN_PLAY
-		turn_token = -1
-		_refresh()
-	)
-	_button(text.t("over.menu"), Vector2(410, 706), Vector2(460, 48), false, focus_index == 1, func ():
-		_to_menu()
-	)
+		var left := int(row.get("left_after", 0))
+		out.append({
+			"id": _portrait(int(row.id)),
+			"name": str(row.name),
+			"rank": i + 1,
+			"note": text.format_key("hud.points %lld", [int(row.score)]) if left == 0 else text.format_key("over.leftAt %lld", [left]),
+			"crowned": i == 0 and game.champion >= 0,
+			"pickable": false,
+		})
+	return out
 
 
-func _legend() -> void:
-	_label(text.t("ui.legend"), 16, Vector2(640, 760), IVORY_DIM, HORIZONTAL_ALIGNMENT_CENTER, 1200)
+func _portrait(seat: int) -> String:
+	if world != null and world.has_method("seat_preset"):
+		return str(world.call("seat_preset", seat))
+	return chosen_preset
 
 
-func _label(value: String, size: int, pos: Vector2, color: Color, align: HorizontalAlignment, width := 0.0) -> Label:
-	var label := Label.new()
-	label.text = value
-	label.position = pos
-	label.add_theme_font_size_override("font_size", size)
-	label.add_theme_color_override("font_color", color)
-	label.horizontal_alignment = align
-	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	label.mouse_filter = MOUSE_FILTER_IGNORE
-	if width > 0.0:
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.size = Vector2(width, 80)
-		if align == HORIZONTAL_ALIGNMENT_CENTER:
-			label.position.x = pos.x - width / 2.0
-		elif align == HORIZONTAL_ALIGNMENT_RIGHT:
-			label.position.x = pos.x - width
-	else:
-		label.size = Vector2(800, 70)
-		if align == HORIZONTAL_ALIGNMENT_CENTER:
-			label.position.x = pos.x - 400
-		elif align == HORIZONTAL_ALIGNMENT_RIGHT:
-			label.position.x = pos.x - 800
-	label.add_theme_color_override("font_outline_color", Color(0.05, 0.03, 0.02, 0.92))
-	label.add_theme_constant_override("outline_size", 5)
-	_adopt(label)
-	return label
-
-
-func _button(caption: String, pos: Vector2, size: Vector2, primary: bool, focused: bool, action: Callable) -> void:
-	var button := Button.new()
-	button.text = caption
-	button.position = pos
-	button.size = size
-	button.focus_mode = Control.FOCUS_NONE
-	var font := INK if primary else IVORY
-	var fill := BRASS if primary else PANEL
-	button.add_theme_stylebox_override("normal", _button_style(fill, focused))
-	button.add_theme_stylebox_override("hover", _button_style(fill.lightened(0.08), focused))
-	button.add_theme_stylebox_override("pressed", _button_style(fill.darkened(0.08), focused))
-	button.add_theme_color_override("font_color", font)
-	button.add_theme_color_override("font_hover_color", font)
-	button.add_theme_color_override("font_pressed_color", font)
-	button.add_theme_font_size_override("font_size", 24 if size.y >= 60 else 22)
-	button.pressed.connect(action)
-	_adopt(button)
-	buttons.append(button)
-
-
-func _back_button() -> void:
-	var x := 40.0 if text.rtl() else 1060.0
-	var button := Button.new()
-	button.text = text.t("game.back")
-	button.position = Vector2(x, 20)
-	button.size = Vector2(180, 56)
-	button.focus_mode = Control.FOCUS_NONE
-	button.add_theme_stylebox_override("normal", _button_style(PANEL, false))
-	button.add_theme_color_override("font_color", IVORY)
-	button.pressed.connect(func ():
-		screen = how_from if screen == SCREEN_HOW else SCREEN_MENU
-		focus_index = 0
-		_refresh()
-	)
-	_adopt(button)
-
-
-func _shade(rect: Rect2, alpha: float) -> void:
-	var plate := ColorRect.new()
-	plate.position = rect.position
-	plate.size = rect.size
-	plate.color = Color(0.04, 0.03, 0.02, alpha)
-	plate.mouse_filter = MOUSE_FILTER_IGNORE
-	_adopt(plate)
-
-
-func _choose_language(code: String) -> void:
-	text.set_language(code)
-	game._save()
-	screen = SCREEN_MENU
-	focus_index = 0
-	_refresh()
+func _verdict() -> String:
+	if game.players.size() == Match.SEATS and game.players[0].out:
+		return text.t("over.youLeft")
+	if game.champion == 0:
+		return text.t("over.youLast")
+	if game.champion > 0:
+		return text.format_key("over.last %@", [game.players[game.champion].player_name])
+	return text.t("over.done")
 
 
 func _open_pause() -> void:
-	if game.phase != Match.PHASE_PLAYING and game.phase != Match.PHASE_REVEAL:
+	if game.phase != Match.PHASE_PLAYING and game.phase != Match.PHASE_REVEAL and game.phase != Match.PHASE_DUEL:
 		return
 	game.set_paused(true)
 	screen = SCREEN_PAUSE
-	focus_index = 0
 
 
 func _resume() -> void:
 	game.set_paused(false)
 	screen = SCREEN_PLAY
-
-
-func _to_menu() -> void:
-	game.return_to_menu()
-	screen = SCREEN_MENU
-	focus_index = 0
-	_refresh()
-
-
-func _move_focus(step: int) -> void:
-	if buttons.is_empty():
-		return
-	focus_index = wrapi(focus_index + step, 0, buttons.size())
-	_refresh()
 
 
 func _make_theme() -> Theme:
@@ -684,24 +664,6 @@ func _make_theme() -> Theme:
 	made.default_font = font
 	made.default_font_size = 20
 	return made
-
-
-func _panel_style(lit: bool) -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = Color("0C4536")
-	box.border_color = BRASS if lit else Color("6E5320")
-	box.set_border_width_all(2)
-	box.set_corner_radius_all(6)
-	return box
-
-
-func _button_style(fill: Color, focused: bool) -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = fill
-	box.border_color = BRASS_HI if focused else BRASS
-	box.set_border_width_all(4 if focused else 2)
-	box.set_corner_radius_all(4)
-	return box
 
 
 func _add_sound(kind: String, stream: AudioStreamWAV, volume_db: float) -> void:

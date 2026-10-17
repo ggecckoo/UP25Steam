@@ -1,5 +1,6 @@
 extends Node3D
 
+const FPHands := preload("res://scripts/fp_hands.gd")
 const ROOM_FIT := 1.16
 const SCALE := {
 	"kaya": 1.0,
@@ -15,8 +16,45 @@ const THROW_KEYS := [0.28, 0.46, 0.78, 1.02, 1.36]
 const TAKE_KEYS := [0.36, 0.76, 1.04]
 const CLEAR := 0.016
 const _FEEL_PATH := "res://data/feel.tres"
+# First person: fan pivot in camera space while waiting and while playing,
+# with the roll of the fan; how far the sleeve runs up the hand's forearm;
+# the widest fan; how far the right hand turns about its hooked index when
+# it takes a standing card, so the wrist comes in from the lower right; how
+# strongly the elbows are drawn toward where they hang at rest.
+const FP_FAN_WAIT := Vector3(-0.21, -0.25, -0.5)
+const FP_FAN_PLAY := Vector3(-0.12, -0.19, -0.4)
+const FP_ROLL_WAIT := -0.16
+const FP_ROLL_PLAY := -0.06
+const FP_SLEEVE := 0.05
+const FP_SLEEVE_GIRTH := Vector3(0.8, 1.0, 0.8)
+const FP_SPREAD := 0.72
+const FP_SPREAD_PLAY := 0.98
+const FP_STEP_WAIT := 0.12
+const FP_STEP_PLAY := 0.165
+const FP_DROP_WAIT := 0.03
+const FP_DROP_PLAY := 0.085
+const FP_PLUCK_TURN := 0.5
+const FP_ELBOW_HANG := 1.5
+# After a hand: the rock-paper-scissors throw, and for a last-placed player
+# who loses it, a fist on the table and the walk out. Seconds into that: fist
+# at the top of the swing, fist on the felt, getting up, and how long getting
+# up takes. Then walking pace, leg cycle in radians a second, and how far the
+# fist's little-finger edge sits below the wrist line.
+const THROW_SHAPES := ["rock", "paper", "scissors"]
+const FIST_TOP := 0.5
+const FIST_HIT := 0.64
+const RISE_AT := 1.45
+const RISE_TIME := 0.9
+const WALK_SPEED := 1.05
+const STEP_RATE := 5.4
+const FIST_DROP := 0.048
+
+signal thumped
+signal departed
 
 var first_person := false
+# Seated opponents wear fingered hands too, driven by the same grips.
+var fingered := false
 var driven := false
 var thinking := false
 var watching := false
@@ -54,6 +92,9 @@ var _head := Vector3.ZERO
 var _fan_frame := Transform3D.IDENTITY
 var _fan_local: Dictionary = {}
 var _held: Node3D = null
+# Cards picked up under the held one, a dealt pile lifted as a whole, each
+# by its frame relative to the held card.
+var _held_rest: Dictionary = {}
 var _held_from := Transform3D.IDENTITY
 var _held_to := Transform3D.IDENTITY
 var _held_mix := 0.0
@@ -66,9 +107,24 @@ var _lift: Dictionary = {}
 var _gather := 0.0
 var _present := 0.0
 var _feel_data: Resource
+var _preset := "kaya"
+var _hands: Node3D = null
+var _fp_xf: Dictionary = {}
+var _fp_mix: Dictionary = {}
+var _held_local_from := Transform3D.IDENTITY
+var _held_local_to := Transform3D.IDENTITY
+var _held_blend := 1.0
+var _held_rate := 10.0
+var gone := false
+var punched := false
+var _duel: Dictionary = {}
+var _exit: Dictionary = {}
+var _stand: Dictionary = {}
+static var _coats := {}
 
 
 func setup(preset: String, style: String, table: Dictionary) -> void:
+	_preset = preset
 	_style = style
 	_center = table.get("center", Vector3.ZERO)
 	_table_radius = float(table.get("radius", 0.85))
@@ -79,6 +135,7 @@ func setup(preset: String, style: String, table: Dictionary) -> void:
 	scale = Vector3(size, size, size)
 	_skel = find_child("Skeleton3D", true, false) as Skeleton3D
 	_stop_clips()
+	_stand = _capture()
 	_cloth()
 	_pose_legs()
 	_plant_feet()
@@ -104,16 +161,38 @@ func set_look_yaw(yaw: float) -> void:
 func make_first_person(cam: Camera3D) -> void:
 	first_person = true
 	camera = cam
+	var fill := cam.get_node_or_null("HandFill") as OmniLight3D
+	if fill == null:
+		fill = OmniLight3D.new()
+		fill.name = "HandFill"
+		cam.add_child(fill)
+	fill.light_color = Color(1.0, 0.92, 0.8)
+	fill.light_energy = 0.85
+	fill.omni_range = 1.6
+	fill.shadow_enabled = false
 	var idx := _skel.find_bone("Head")
 	if idx >= 0:
 		_skel.set_bone_pose_scale(idx, Vector3.ONE * 0.001)
-	_scale_hand("LeftHand", 0.62)
-	_scale_hand("RightHand", 0.55)
+	# The Meshy paw is a single bone, so the seated player gets fingered hands
+	# at the end of the sleeves instead.
+	_scale_hand("LeftHand", 0.001)
+	_scale_hand("RightHand", 0.001)
+	# This close to the eye the coat sleeves would dwarf the wrists coming out
+	# of them, so they are slimmed across, never along the arm.
+	for side in SIDES:
+		var fore := _skel.find_bone(side + "ForeArm")
+		if fore >= 0:
+			_skel.set_bone_pose_scale(fore, FP_SLEEVE_GIRTH)
+	for bone_name in ["LeftUpLeg", "RightUpLeg"]:
+		var leg := _skel.find_bone(bone_name)
+		if leg >= 0:
+			_scale_bone(leg, 0.001)
 	var clip := _near_clip_shader()
 	for node in find_children("*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
 		if mesh.mesh == null:
 			continue
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		for surface in mesh.mesh.get_surface_count():
 			var source := mesh.get_surface_override_material(surface) as StandardMaterial3D
 			if source == null:
@@ -127,6 +206,14 @@ func make_first_person(cam: Camera3D) -> void:
 			mat.set_shader_parameter("roughness_amount", source.roughness)
 			mat.set_shader_parameter("use_tex", source.albedo_texture != null)
 			mesh.set_surface_override_material(surface, mat)
+	if _hands == null:
+		_hands = FPHands.new()
+		_hands.name = "FirstPersonHands"
+		add_child(_hands)
+		_hands.setup(_preset, scale.x)
+		for side in SIDES:
+			_fp_xf[side] = _fp_rest(side)
+			_fp_mix[side] = {"relax": 1.0}
 
 
 func _near_clip_shader() -> Shader:
@@ -138,17 +225,20 @@ uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform float roughness_amount = 0.86;
 uniform bool use_tex = true;
 void fragment() {
-	if (length(VERTEX) < 0.2) {
+	if (length(VERTEX) < 0.08) {
 		discard;
 	}
 	vec3 color = albedo_color.rgb;
 	if (use_tex) {
 		color *= texture(albedo_tex, UV).rgb;
 	}
+	float luma = dot(color, vec3(0.299, 0.587, 0.114));
+	color = mix(vec3(0.34, 0.24, 0.16), color, smoothstep(0.02, 0.22, luma));
 	ALBEDO = color;
 	ROUGHNESS = roughness_amount;
 	METALLIC = 0.0;
 	SPECULAR = 0.18;
+	EMISSION = color * 0.28;
 }
 """
 	return shader
@@ -188,6 +278,40 @@ func busy() -> bool:
 	return not _act.is_empty() or not _queue.is_empty()
 
 
+func duel_pose(stage: int, age: float, throw: int, toward: Vector3) -> void:
+	# Raised hand for the throw: a fist through the chant, then `throw`.
+	_duel = {"stage": stage, "age": age, "throw": throw, "toward": toward}
+
+
+func duel_rest() -> void:
+	_duel = {}
+
+
+func storm_out(path: Array) -> void:
+	# Fist on the table, then up and along `path` (floor points) to the door.
+	if gone or not _exit.is_empty():
+		return
+	_exit = {"t": 0.0, "path": path, "leg": 0, "step": 0.0, "from": _fp_xf.get("Right", null)}
+	_duel = {}
+	punched = false
+
+
+func leaving() -> bool:
+	return not _exit.is_empty() and not gone
+
+
+func standing() -> bool:
+	return leaving() and float(_exit["t"]) >= RISE_AT
+
+
+func vanish() -> void:
+	gone = true
+	visible = false
+	_exit = {}
+	_duel = {}
+	clear_fan()
+
+
 func add_to_fan(card: Node3D, index := -1) -> void:
 	if card == null or fan.has(card):
 		return
@@ -219,6 +343,7 @@ func clear_fan() -> void:
 	fan.clear()
 	_fan_local.clear()
 	_held = null
+	_held_rest.clear()
 	_act = {}
 	_queue.clear()
 	selected = null
@@ -228,8 +353,10 @@ func throw_card(card: Node3D, aim: Vector3, done: Callable) -> void:
 	_queue.append({"kind": "throw", "card": card, "aim": aim, "done": done})
 
 
-func take_card(card: Node3D, index: int, done: Callable) -> void:
-	_queue.append({"kind": "take", "card": card, "index": index, "done": done})
+func take_card(card: Node3D, index: int, done: Callable, rest := []) -> void:
+	# Picks `card` up off the felt into the fan; `rest` lie under it in the
+	# same pile and come up with it.
+	_queue.append({"kind": "take", "card": card, "index": index, "done": done, "rest": rest})
 
 
 func cancel(card: Node3D) -> void:
@@ -239,16 +366,17 @@ func cancel(card: Node3D) -> void:
 	if _act.get("card") == card:
 		if _held == card:
 			_held = null
+			_held_rest.clear()
 		_act = {}
 	remove_from_fan(card)
 
 
 func pick(cam: Camera3D, point: Vector2) -> Node3D:
-	var w := CARD.x * 0.5
-	var h := CARD.y * 0.5
 	for i in range(fan.size() - 1, -1, -1):
 		var card: Node3D = fan[i]
 		var xf := card.global_transform
+		var w := CARD.x * 0.5
+		var h := CARD.y * 0.5
 		var left := -w
 		var right := w
 		var outline := PackedVector2Array()
@@ -264,11 +392,23 @@ func pick(cam: Camera3D, point: Vector2) -> Node3D:
 
 
 func _process(delta: float) -> void:
-	if _skel == null:
+	if _skel == null or gone:
 		return
 	_time += delta
 	if not driven:
 		_demo()
+	if not _exit.is_empty():
+		_exit["t"] = float(_exit["t"]) + delta
+		if not punched and float(_exit["t"]) >= FIST_HIT:
+			punched = true
+			thumped.emit()
+		if float(_exit["t"]) >= RISE_AT:
+			if first_person:
+				# The room carries the camera out from here.
+				vanish()
+				return
+			_pose_walk(delta)
+			return
 	_pose_body(delta)
 	_advance(delta)
 	_pose_arms(delta)
@@ -291,8 +431,11 @@ func _pose_body(delta: float) -> void:
 	var torso_target := _head_yaw if first_person else _head_yaw * shares.x
 	_torso_yaw = lerpf(_torso_yaw, torso_target, torso_k)
 	var torso := clampf(_torso_yaw, -0.28, 0.28) if first_person else clampf(_torso_yaw, -0.35, 0.35)
-	_set_extra("Spine01", breath * 0.45 + _lean * 0.10, torso * 0.45)
-	_set_extra("Spine02", breath + _lean * 0.17, torso * 0.55)
+	var sit := 0.55 if first_person else 0.0
+	_set_extra("Spine01", breath * 0.45 + _lean * 0.10 + sit * 0.4, torso * 0.45)
+	_set_extra("Spine02", breath + _lean * 0.17 + sit * 0.6, torso * 0.55)
+	if first_person:
+		_bend("Hips", -0.45)
 	if not first_person:
 		var rest_yaw := _head_yaw - torso
 		var upper := maxf(shares.y + shares.z, 0.001)
@@ -334,7 +477,9 @@ func _advance(delta: float) -> void:
 			look_point = _fan_frame.origin + _fan_frame.basis.y * 0.04
 		return
 	_act["t"] = float(_act["t"]) + delta
-	if str(_act["kind"]) == "throw":
+	if _fingered():
+		_fp_act_events()
+	elif str(_act["kind"]) == "throw":
 		_run_throw(frame)
 	else:
 		_run_take(frame)
@@ -347,7 +492,8 @@ func _run_throw(frame: Dictionary) -> void:
 		_finish(card)
 		_act = {}
 		return
-	var stage := _stage_of(t, THROW_KEYS)
+	# One stage a frame at most, so a long frame never skips a stage's entry.
+	var stage := mini(_stage_of(t, THROW_KEYS), int(_act["stage"]) + 1)
 	if stage >= THROW_KEYS.size():
 		_act = {}
 		return
@@ -374,17 +520,14 @@ func _run_throw(frame: Dictionary) -> void:
 			to = _idle_right(frame)
 	var start := 0.0 if stage == 0 else float(THROW_KEYS[stage - 1])
 	var u := clampf((t - start) / maxf(float(THROW_KEYS[stage]) - start, 0.01), 0.0, 1.0)
-	if first_person:
-		_goal["Right"] = _fp_hand_rest(1.0)
-	else:
-		_goal["Right"] = _mix(_act["from"], to, _smooth(u))
+	_goal["Right"] = _mix(_act["from"], to, _smooth(u))
 	if _held != null:
 		_held_mix = _smooth(clampf((t - float(THROW_KEYS[0])) / (float(THROW_KEYS[2]) - float(THROW_KEYS[0])), 0.0, 1.0))
 	var swing := _smooth(clampf((t - 0.3) / 0.32, 0.0, 1.0)) * (1.0 - _smooth(clampf((t - 0.7) / 0.4, 0.0, 1.0)))
-	_lean_goal = 0.0 if first_person else 0.12 + 0.55 * swing
-	if stage == 0 and not first_person:
+	_lean_goal = 0.12 + 0.55 * swing
+	if stage == 0:
 		look_point = card.global_position
-	elif not first_person:
+	else:
 		look_point = _act.get("aim", _center)
 
 
@@ -394,7 +537,7 @@ func _run_take(frame: Dictionary) -> void:
 	var keys: Array = TAKE_KEYS.duplicate()
 	if not _queue.is_empty():
 		keys[2] = float(keys[1]) + 0.12
-	var stage := _stage_of(t, keys)
+	var stage := mini(_stage_of(t, keys), int(_act["stage"]) + 1)
 	if stage >= keys.size():
 		_act = {}
 		return
@@ -417,14 +560,10 @@ func _run_take(frame: Dictionary) -> void:
 			to = _idle_right(frame)
 	var start := 0.0 if stage == 0 else float(keys[stage - 1])
 	var u := clampf((t - start) / maxf(float(keys[stage]) - start, 0.01), 0.0, 1.0)
-	if first_person:
-		_goal["Right"] = _fp_hand_rest(1.0)
-	else:
-		_goal["Right"] = _mix(_act["from"], to, _smooth(u))
+	_goal["Right"] = _mix(_act["from"], to, _smooth(u))
 	var reach := _smooth(clampf(t / 0.3, 0.0, 1.0)) * (1.0 - _smooth(clampf((t - 0.4) / 0.35, 0.0, 1.0)))
-	_lean_goal = 0.0 if first_person else 0.1 + 0.5 * reach
-	if not first_person:
-		look_point = card.global_position
+	_lean_goal = 0.1 + 0.5 * reach
+	look_point = card.global_position
 
 
 func _stage_of(t: float, keys: Array) -> int:
@@ -437,11 +576,12 @@ func _stage_of(t: float, keys: Array) -> int:
 func _grab(card: Node3D, to_local: Transform3D) -> void:
 	remove_from_fan(card)
 	_held = card
-	if first_person:
-		_act["card_from"] = card.global_transform
-	_held_from = _grip_frame().affine_inverse() * card.global_transform
+	_lift_rest(card)
+	# The skeleton is still the seated rest pose here. Arm IK runs afterwards,
+	# so the card has to be parented in that posed hand, not measured against it now.
+	_held_from = to_local
 	_held_to = to_local
-	_held_mix = 0.0
+	_held_mix = 1.0
 
 
 func _release() -> void:
@@ -464,8 +604,23 @@ func _drop(card: Node3D, index: int) -> void:
 	_held = null
 	if index == -2:
 		index = randi_range(0, fan.size())
+	for under in _held_rest:
+		if is_instance_valid(under):
+			add_to_fan(under)
+	_held_rest.clear()
 	add_to_fan(card, index)
 	_finish(card)
+
+
+func _lift_rest(card: Node3D) -> void:
+	# The cards under a picked-up one, if it was lifted off a pile.
+	_held_rest.clear()
+	if str(_act.get("kind", "")) != "take":
+		return
+	var inverse := card.global_transform.affine_inverse()
+	for under in _act.get("rest", []):
+		if is_instance_valid(under) and under != card:
+			_held_rest[under] = inverse * (under as Node3D).global_transform
 
 
 func _frame() -> Dictionary:
@@ -477,8 +632,6 @@ func _frame() -> Dictionary:
 
 func _rest_goal(side: String, frame: Dictionary) -> Dictionary:
 	var sign := 1.0 if side == "Left" else -1.0
-	if first_person and camera != null and side == "Right":
-		return _fp_right_rest(frame)
 	var f: Vector3 = frame["f"]
 	var l: Vector3 = frame["l"]
 	var chest: Vector3 = frame["chest"]
@@ -497,31 +650,10 @@ func _rest_goal(side: String, frame: Dictionary) -> Dictionary:
 	return {"p": p, "len": along, "palm": Vector3.DOWN, "pole": pole, "contact": false, "plant": true}
 
 
-func _fp_right_rest(_frame: Dictionary) -> Dictionary:
-	return _fp_hand_rest(1.0)
-
-
-func _fp_hand_rest(sign: float) -> Dictionary:
-	var cam := camera.global_transform
-	var ahead := _flat(-cam.basis.z)
-	var right := _flat(cam.basis.x)
-	var p := cam.origin + right * (0.42 * sign) + ahead * 0.86 + Vector3.DOWN * 0.6
-	p.y = _felt_top + _clear() + 0.02
-	return {
-		"p": p,
-		"len": (Vector3.DOWN * 0.88 + ahead * 0.28).normalized(),
-		"palm": Vector3.DOWN,
-		"pole": (Vector3.DOWN * 0.75 - right * sign * 0.45 - ahead * 0.15).normalized(),
-		"contact": false,
-	}
-
-
 func _fan_goal(frame: Dictionary) -> Dictionary:
 	var f: Vector3 = frame["f"]
 	var l: Vector3 = frame["l"]
 	var raise := clampf(_raise, -1.0, 1.0)
-	if first_person and camera != null:
-		return _fp_hold_goal()
 	var p: Vector3 = frame["chest"] + f * (0.30 + 0.03 * raise) + l * (0.13 - 0.07 * _gather)
 	p.y = _felt_top + 0.125 + 0.04 * raise
 	var eye := eye_point()
@@ -540,18 +672,8 @@ func _think_goal(frame: Dictionary) -> Dictionary:
 
 func _grip_goal(card: Node3D, frame: Dictionary) -> Dictionary:
 	var xf := card.global_transform
-	var n := _fan_frame.basis.z * _grip_side()
+	var n := _fan_frame.basis.z
 	var top := xf * Vector3(0.0, CARD.y * 0.46, 0.0)
-	if first_person and camera != null:
-		var right := _flat(camera.global_transform.basis.x)
-		var p := top + right * 0.16 + Vector3.DOWN * 0.02
-		p.y = maxf(p.y, _felt_top + 0.1)
-		return {
-			"p": p,
-			"len": (-right * 0.75 + Vector3.UP * 0.35).normalized(),
-			"palm": (camera.global_position - p).normalized(),
-			"pole": (Vector3.DOWN * 0.65 - right * 0.45).normalized(),
-		}
 	var p := top - xf.basis.y * _paw_reach("Right") + n * 0.035
 	return {"p": p, "len": xf.basis.y, "palm": -n, "pole": _pole("Right", frame)}
 
@@ -559,28 +681,12 @@ func _grip_goal(card: Node3D, frame: Dictionary) -> Dictionary:
 func _pull_goal() -> Dictionary:
 	var from: Dictionary = _act.get("pull", _goal["Right"])
 	var goal := from.duplicate()
-	var p: Vector3 = Vector3(from["p"]) + _fan_frame.basis.y * 0.015 + _fan_frame.basis.z * (0.01 * _grip_side())
+	var p: Vector3 = Vector3(from["p"]) + _fan_frame.basis.y * 0.015 + _fan_frame.basis.z * 0.01
 	goal["p"] = p
 	return goal
 
 
-func _grip_side() -> float:
-	return -1.0 if first_person else 1.0
-
-
 func _release_goal(frame: Dictionary) -> Dictionary:
-	if first_person and camera != null:
-		var cam := camera.global_transform
-		var ahead := _flat(-cam.basis.z)
-		var right := _flat(cam.basis.x)
-		var p := cam.origin + right * 0.24 + ahead * 0.66 + Vector3.DOWN * 0.32
-		p.y = maxf(_felt_top + 0.1, p.y)
-		return {
-			"p": p,
-			"len": (ahead * 0.65 + Vector3.DOWN * 0.4).normalized(),
-			"palm": (Vector3.DOWN * 0.75 + ahead * 0.25).normalized(),
-			"pole": _pole("Right", frame),
-		}
 	var aim: Vector3 = _act.get("aim", _center + Vector3.UP * _felt_top)
 	aim.y = _felt_top + 0.02
 	var shoulder := _bone_world("RightArm")
@@ -615,14 +721,11 @@ func _drop_goal(frame: Dictionary) -> Dictionary:
 		var rest := _fan_goal(frame)
 		rest["p"] = Vector3(rest["p"]) + Vector3(frame["f"]) * 0.02
 		return rest
-	var side := _grip_side()
-	return {"p": deck * Vector3(0.05, CARD.y * 0.5, 0.06 * side), "len": deck.basis.y, "palm": -deck.basis.z * side, "pole": _pole("Right", frame)}
+	return {"p": deck * Vector3(0.05, CARD.y * 0.5, 0.06), "len": deck.basis.y, "palm": -deck.basis.z, "pole": _pole("Right", frame)}
 
 
 func _pole(side: String, frame: Dictionary) -> Vector3:
 	var sign := 1.0 if side == "Left" else -1.0
-	if first_person:
-		return (Vector3.DOWN * 0.9 + Vector3(frame["l"]) * (0.4 * sign) - Vector3(frame["f"]) * 0.2).normalized()
 	return (Vector3.DOWN * 0.8 + Vector3(frame["l"]) * (0.55 * sign) - Vector3(frame["f"]) * 0.25).normalized()
 
 
@@ -639,6 +742,9 @@ func _demo() -> void:
 
 
 func _pose_arms(delta: float) -> void:
+	if _fingered():
+		_fp_pose(delta)
+		return
 	var gather_goal := 0.0
 	if not _act.is_empty():
 		var stage := int(_act.get("stage", -1))
@@ -646,15 +752,16 @@ func _pose_arms(delta: float) -> void:
 		if (kind == "throw" and stage <= 1) or (kind == "take" and stage == 1):
 			gather_goal = 1.0
 	_gather = lerpf(_gather, gather_goal, _rate(9.0, delta))
-	if first_person:
-		var present_goal := 1.0 if thinking or inspecting else 0.0
-		_present = lerpf(_present, present_goal, _rate(4.5, delta))
 	var frame := _frame()
 	var left := _fan_goal(frame) if not fan.is_empty() else _rest_goal("Left", frame)
 	_goal["Left"] = _mix(_goal.get("Left", left), left, _rate(8.0, delta))
 	_solve("Left", _goal["Left"], delta)
 	_fan_frame = _make_fan_frame()
 	_layout_fan(delta)
+	if not _gesture(false).is_empty():
+		# A throw or a fist needs fingers; from here on the fingered
+		# pipeline poses this seat.
+		make_fingered()
 	_solve("Right", _goal["Right"], delta)
 	_carry()
 
@@ -669,14 +776,11 @@ func _solve(side: String, goal: Dictionary, delta: float) -> void:
 	var world_basis := _paw_basis(side, along, palm)
 	var paw: Dictionary = _paw[side]
 	var wrist := Vector3(goal["p"])
-	if not bool(goal.get("plant", false)):
+	if not bool(goal.get("plant", false)) and not bool(goal.get("wrist", false)):
 		wrist = Vector3(goal["p"]) - world_basis * (Vector3(paw["center"]) * _unit)
 	var pole: Vector3 = goal["pole"]
 	if bool(goal.get("plant", false)):
 		_seat_on_table(side, wrist, pole, world_basis)
-		return
-	if first_person:
-		_lift_paw(side, wrist, pole, world_basis, float(_feel().plant_lift) * 0.6)
 		return
 	for i in 12:
 		_reach(side, wrist, pole)
@@ -846,14 +950,13 @@ func _above(point: Vector3) -> float:
 
 
 func _make_fan_frame() -> Transform3D:
-	if first_person and camera != null:
-		return _fp_fan_frame()
 	var xf := _bone_xf("LeftHand")
 	var basis := xf.basis.orthonormalized()
 	var paw: Dictionary = _paw["Left"]
 	var n := (basis * Vector3(paw["palm"])).normalized()
 	var along := (basis * Vector3(paw["len"])).normalized()
-	var grip: Vector3 = Vector3(paw["center"]) + Vector3(paw["palm"]) * float(paw["surface"]) + Vector3(paw["len"]) * (float(paw["reach"]) * 0.45)
+	var heel := 0.45
+	var grip: Vector3 = Vector3(paw["center"]) + Vector3(paw["palm"]) * float(paw["surface"]) + Vector3(paw["len"]) * (float(paw["reach"]) * heel)
 	var pivot: Vector3 = xf * grip + n * 0.006
 	var up := Vector3.UP * 0.85 + along * 0.15
 	up = up - n * up.dot(n)
@@ -864,31 +967,501 @@ func _make_fan_frame() -> Transform3D:
 	return Transform3D(Basis(x, up, n), pivot)
 
 
-func _fp_hold_goal() -> Dictionary:
-	var fan := _fp_fan_frame()
-	var right := _flat(camera.global_transform.basis.x)
-	var p := fan.origin - fan.basis.z * 0.12 - fan.basis.y * 0.06
-	return {
-		"p": p,
-		"len": (fan.basis.y * 0.85 + fan.basis.z * 0.15).normalized(),
-		"palm": fan.basis.z,
-		"pole": (Vector3.DOWN * 0.65 - right * 0.55).normalized(),
-	}
+func _fp_pose(delta: float) -> void:
+	var present_goal := 1.0 if thinking or inspecting else 0.0
+	_present = lerpf(_present, present_goal, _rate(4.5, delta))
+	var holding := not fan.is_empty()
+	var left := _fp_hand_for(_fp_fan_target(), _hands.grip()) if holding else _fp_rest("Left")
+	_fp_xf["Left"] = Transform3D(_fp_xf["Left"]).interpolate_with(_fp_within_reach("Left", left), _rate(8.0, delta))
+	_fp_mix["Left"] = _shape_toward(_fp_mix["Left"], "fan" if holding else "relax", _rate(9.0, delta))
+	_hands.place("Left", _fp_xf["Left"])
+	_hands.shape("Left", _fp_mix["Left"])
+	_fan_frame = _hands.world_frame("Left", _hands.grip())
+	_layout_fan(delta)
+	var gesture := _gesture(first_person)
+	if not gesture.is_empty():
+		_follow_gesture(gesture, delta)
+	elif _act.is_empty():
+		var idle := _fp_idle_right()
+		_fp_xf["Right"] = Transform3D(_fp_xf["Right"]).interpolate_with(idle["xf"], _rate(6.0, delta))
+		_fp_mix["Right"] = _shape_toward(_fp_mix["Right"], idle["shape"], _rate(8.0, delta))
+	else:
+		var to := _fp_stage_goal()
+		var u := _smooth(float(_act.get("u", 1.0)))
+		var xf := Transform3D(_act["xf0"]).interpolate_with(to["xf"], u)
+		xf.origin += Vector3(to.get("arc", Vector3.ZERO)) * sin(PI * u)
+		_fp_xf["Right"] = xf
+		_fp_mix["Right"] = _shape_toward(_act["mix0"], to["shape"], u)
+	_fp_xf["Right"] = _fp_within_reach("Right", _fp_xf["Right"])
+	_hands.place("Right", _fp_xf["Right"])
+	_hands.shape("Right", _fp_mix["Right"])
+	_held_blend = minf(_held_blend + delta * _held_rate, 1.0)
+	_carry()
+	for side in SIDES:
+		_fp_arm(side, _fp_xf[side])
 
 
-func _fp_fan_frame() -> Transform3D:
+func _fp_fan_target() -> Transform3D:
+	# Fan pivot in front of the camera, facing it: low on the left while the
+	# others play, raised toward the middle while choosing a card. A seated
+	# opponent holds it up before the chest, faces to their own eyes.
+	if not first_person:
+		var frame := _frame()
+		var f: Vector3 = frame["f"]
+		var l: Vector3 = frame["l"]
+		var spot: Vector3 = Vector3(frame["chest"]) + f * lerpf(0.29, 0.25, _present) + l * lerpf(0.11, 0.06, _present)
+		spot.y = _felt_top + lerpf(0.13, 0.2, _present)
+		var n := (eye_point() - spot).normalized()
+		var up := Vector3.UP - n * Vector3.UP.dot(n)
+		up = up.normalized().rotated(n, lerpf(-0.22, -0.08, _present))
+		return Transform3D(Basis(up.cross(n).normalized(), up, n), spot)
 	var cam := camera.global_transform
-	var ahead := _flat(-cam.basis.z)
-	var right := _flat(cam.basis.x)
-	var rest := cam.origin + right * -0.2 + ahead * 0.34 + Vector3.DOWN * 0.4
-	var play := cam.origin + right * -0.05 + ahead * 0.4 + Vector3.DOWN * 0.34
-	var pivot := rest.lerp(play, _present)
-	pivot.y = maxf(pivot.y, _felt_top + 0.06)
-	var n := (cam.origin - pivot).normalized()
-	var up := Vector3.UP - n * n.dot(Vector3.UP)
-	up = up.normalized()
-	var x := up.cross(n).normalized()
-	return Transform3D(Basis(x, up, n), pivot)
+	var spot: Vector3 = cam * FP_FAN_WAIT.lerp(FP_FAN_PLAY, _present)
+	var n := (cam.origin - spot).normalized()
+	var up := cam.basis.y - n * cam.basis.y.dot(n)
+	up = up.normalized().rotated(n, lerpf(FP_ROLL_WAIT, FP_ROLL_PLAY, _present))
+	return Transform3D(Basis(up.cross(n).normalized(), up, n), spot)
+
+
+func _fp_hand_for(frame: Transform3D, local: Transform3D) -> Transform3D:
+	# Hand placement that lays the hand-space frame `local` onto `frame`.
+	var basis := frame.basis.orthonormalized() * local.basis.inverse()
+	return Transform3D(basis, frame.origin - basis * (local.origin * float(_hands.size)))
+
+
+func _fp_held_local() -> Transform3D:
+	return _held_local_from.interpolate_with(_held_local_to, _smooth(_held_blend))
+
+
+func _fp_hold(to: Transform3D, seconds: float) -> void:
+	# Ease the held card from wherever it sits in the hand into `to`.
+	_held_local_from = _fp_held_local()
+	_held_local_to = to
+	_held_blend = 0.0
+	_held_rate = 1.0 / maxf(seconds, 0.01)
+
+
+func _fp_rest(side: String) -> Transform3D:
+	# Relaxed on the felt beside the fan, palm down, fingers toward the middle.
+	var frame := _frame()
+	var f: Vector3 = frame["f"]
+	var l: Vector3 = frame["l"]
+	var sign := 1.0 if side == "Right" else -1.0
+	var p: Vector3 = frame["chest"] + f * 0.36 - l * (0.2 * sign)
+	var along := f.rotated(Vector3.UP, 0.42 * sign)
+	p.y = _felt_top + _hands.ground_lift(side)
+	return Transform3D(Basis(along.cross(Vector3.UP).normalized(), along, Vector3.UP), p)
+
+
+func _fp_idle_right() -> Dictionary:
+	var rest := _fp_rest("Right")
+	if not thinking or fan.is_empty():
+		return {"xf": rest, "shape": "relax"}
+	# Choosing: off the cloth and drawn in toward the fan.
+	var toward := _flat(_fan_frame.origin - rest.origin).normalized()
+	return {"xf": Transform3D(rest.basis, rest.origin + toward * 0.05 + Vector3.UP * 0.02), "shape": "ready"}
+
+
+func _fp_act_events() -> void:
+	var card: Node3D = _act["card"]
+	var t: float = _act["t"]
+	var throwing := str(_act["kind"]) == "throw"
+	var keys: Array = THROW_KEYS.duplicate() if throwing else TAKE_KEYS.duplicate()
+	if not throwing and not _queue.is_empty():
+		keys[2] = float(keys[1]) + 0.12
+	if throwing and int(_act["stage"]) < 1 and not fan.has(card):
+		_finish(card)
+		_act = {}
+		return
+	var stage := mini(_stage_of(t, keys), int(_act["stage"]) + 1)
+	if stage >= keys.size():
+		_act = {}
+		return
+	if stage != int(_act["stage"]):
+		var entering := int(_act["stage"])
+		_act["stage"] = stage
+		_act["xf0"] = _fp_xf["Right"]
+		_act["mix0"] = _fp_mix["Right"].duplicate()
+		if stage >= 1 and entering < 1:
+			# The card stays where the fingers closed on it and settles
+			# into the grip while it is carried.
+			if throwing:
+				remove_from_fan(card)
+			_held = card
+			_lift_rest(card)
+			_held_local_from = _hands.local_frame("Right", card.global_transform)
+			_held_local_to = _held_local_from
+			_held_blend = 1.0
+			if not throwing:
+				_fp_hold(_hands.pluck(), float(keys[1]) - float(keys[0]))
+		if throwing and stage >= 2 and entering < 2:
+			_fp_hold(_hands.pluck(), float(keys[2]) - float(keys[1]))
+		if throwing and stage >= 3 and entering < 3:
+			_release()
+		if not throwing and stage >= 2 and entering < 2:
+			_drop(card, -1 if int(_act.get("index", -1)) == -2 else int(_act.get("index", -1)))
+	var start := 0.0 if stage == 0 else float(keys[stage - 1])
+	_act["u"] = clampf((t - start) / maxf(float(keys[stage]) - start, 0.01), 0.0, 1.0)
+
+
+func _fp_stage_goal() -> Dictionary:
+	# Both ways the right hand holds a card by its top edge, index hooked
+	# over it and thumb on the face, so the wrist stays below and in front
+	# of the card instead of turning the forearm up past the camera.
+	var card: Node3D = _act["card"]
+	var stage := int(_act["stage"])
+	var toward_cam := (_viewer() - _fan_frame.origin).normalized()
+	if str(_act["kind"]) == "throw":
+		match stage:
+			0:
+				return {"xf": _fp_pluck_hand(card.global_transform), "shape": "pluck", "arc": toward_cam * 0.05 - _fan_frame.basis.y * 0.03}
+			1:
+				var from := Transform3D(_act["xf0"])
+				return {"xf": Transform3D(from.basis, from.origin + _fan_frame.basis.y * 0.08 + toward_cam * 0.02), "shape": "pluck"}
+			2:
+				return {"xf": _fp_hand_for(_fp_toss_card(), _hands.pluck()), "shape": "pluck", "arc": Vector3.UP * 0.04}
+			3:
+				var toss := _fp_hand_for(_fp_toss_card(), _hands.pluck())
+				var ahead := _flat(Vector3(_act.get("aim", _center)) - toss.origin)
+				return {"xf": Transform3D(toss.basis, toss.origin + ahead * 0.05 + Vector3.UP * 0.015), "shape": "open"}
+		var idle := _fp_idle_right()
+		return {"xf": idle["xf"], "shape": idle["shape"]}
+	match stage:
+		0:
+			return {"xf": _fp_hand_for(_fp_lift_card(card), _hands.pluck()), "shape": "pluck", "arc": Vector3.UP * 0.05}
+		1:
+			var slot := _fan_frame * Transform3D(Basis.IDENTITY, Vector3(FPHands.PIVOT.x, FPHands.PIVOT.y + 0.06, 0.006))
+			return {"xf": _fp_pluck_hand(slot), "shape": "pluck", "arc": toward_cam * 0.04 + Vector3.UP * 0.03}
+	var rest := _fp_idle_right()
+	return {"xf": rest["xf"], "shape": rest["shape"]}
+
+
+func _viewer() -> Vector3:
+	# Whose eyes the fan is held for.
+	if first_person and camera != null:
+		return camera.global_position
+	return eye_point()
+
+
+func _fingered() -> bool:
+	return _hands != null and (first_person or fingered)
+
+
+func make_fingered() -> void:
+	# Fingered hands for a seated opponent, furred like the paws they replace.
+	if first_person or fingered:
+		return
+	fingered = true
+	if _hands == null:
+		_hands = FPHands.new()
+		_hands.name = "Hands"
+		add_child(_hands)
+		_hands.setup(_preset, scale.x, true, 8, true, _coat_tone())
+	_hands.visible = true
+	(_hands.get_node("LeftHand") as Node3D).visible = true
+	_scale_hand("LeftHand", 0.001)
+	_scale_hand("RightHand", 0.001)
+	for side in SIDES:
+		_fp_xf[side] = _fp_rest(side)
+		_fp_mix[side] = {"relax": 1.0}
+
+
+func _fp_pluck_hand(card_xf: Transform3D) -> Transform3D:
+	# Right hand on a standing card's top edge, turned about the hooked index:
+	# the wrist moves to the lower right and the outer fingers lift off the
+	# edge rather than into the card.
+	var hook := Transform3D(Basis.IDENTITY, Vector3(-FPHands.PLUCK_AT, CARD.y * 0.5, 0.0))
+	var turned := card_xf * hook * Transform3D(Basis(Vector3.BACK, FP_PLUCK_TURN), Vector3.ZERO) * hook.affine_inverse()
+	return _fp_hand_for(turned, _hands.pluck())
+
+
+func _fp_toss_card() -> Transform3D:
+	# Where the hand lets the card go: flat, face up, top edge leading, a
+	# short way out over the cloth toward where it will land.
+	var aim: Vector3 = _act.get("aim", _center)
+	var start := _fp_rest("Right").origin
+	var ahead := _flat(aim - start)
+	var at := start + ahead * minf(0.16, Vector2(aim.x - start.x, aim.z - start.z).length() * 0.5)
+	at.y = _felt_top + 0.07
+	if not first_person:
+		return Transform3D(Basis(ahead.cross(Vector3.DOWN).normalized(), ahead, Vector3.DOWN), at)
+	return Transform3D(Basis(ahead.cross(Vector3.UP).normalized(), ahead, Vector3.UP), at)
+
+
+func _fp_lift_card(card: Node3D) -> Transform3D:
+	# A card lying on the felt, as the hand closes on its far edge: face up,
+	# a little above the cloth so the hooked index stays out of it.
+	var top := _flat(card.global_transform.basis.y)
+	var at := card.global_position
+	at.y = _felt_top + 0.015
+	return Transform3D(Basis(top.cross(Vector3.UP).normalized(), top, Vector3.UP), at)
+
+
+func _fp_within_reach(side: String, hand: Transform3D) -> Transform3D:
+	# Pull the hand in if the sleeve could not reach its forearm.
+	var shoulder := _bone_world(side + "Arm")
+	var wrist := hand.origin - hand.basis.y.normalized() * _sleeve()
+	var limit := (float(_upper.get(side, 0.25)) + float(_fore.get(side, 0.25))) * 0.98
+	var span := wrist - shoulder
+	if span.length() <= limit:
+		return hand
+	return Transform3D(hand.basis, hand.origin - span.normalized() * (span.length() - limit))
+
+
+func _fp_arm(side: String, hand: Transform3D) -> void:
+	# Sleeve over the hand's forearm. The elbow bends toward the line that
+	# forearm points along, pulled toward where an elbow hangs at rest, below
+	# the shoulder and a little out and forward; aimed along the forearm alone
+	# it swings up past the camera whenever the hand works close to the chest.
+	var back := -hand.basis.y.normalized()
+	var wrist := hand.origin + back * _sleeve()
+	var shoulder := _bone_world(side + "Arm")
+	var frame := _frame()
+	var outward: Vector3 = -frame["l"] if side == "Right" else frame["l"]
+	var hang := (Vector3.DOWN * 0.24 + Vector3(frame["f"]) * 0.08 + outward * 0.06).normalized()
+	var along := (wrist + back * float(_fore.get(side, 0.25)) - shoulder).normalized()
+	_reach(side, wrist, along + hang * FP_ELBOW_HANG)
+
+
+func _gesture(fp: bool) -> Dictionary:
+	# Right hand while throwing or punching: where it goes and its shape;
+	# empty when the hand is free for cards.
+	if not _exit.is_empty():
+		return _punch(fp)
+	if _duel.is_empty() or (fp and camera == null):
+		return {}
+	var stage := int(_duel["stage"])
+	var age := float(_duel["age"])
+	var throw := int(_duel["throw"])
+	var anchor := _duel_anchor(fp)
+	var p := anchor.origin
+	var shape := "rock"
+	var rate := 11.0
+	if stage == Match.DUEL_CHANT:
+		# Down on every word of the chant, and once more for the throw.
+		p += anchor.basis.y * (0.075 * sin(PI * fmod(age, Match.CHANT_BEAT) / Match.CHANT_BEAT))
+		rate = 30.0
+	elif (stage == Match.DUEL_SHOW or stage == Match.DUEL_AFTER) and throw >= 0 and throw < THROW_SHAPES.size():
+		shape = THROW_SHAPES[throw]
+		p += -anchor.basis.z * (0.05 * _smooth(clampf(age / 0.16, 0.0, 1.0))) + anchor.basis.y * 0.025
+		rate = 24.0
+	return {"xf": Transform3D(anchor.basis, p), "shape": shape, "rate": rate}
+
+
+func _duel_anchor(fp: bool) -> Transform3D:
+	# Bottom of the pump, fingers up and the palm toward whoever has to read
+	# the throw: the opponent, turned partly to the seated player's camera.
+	if fp:
+		var cam := camera.global_transform
+		var up := (cam.basis.y * 0.92 - cam.basis.z * 0.3).normalized()
+		var back := (cam.basis.z - up * cam.basis.z.dot(up)).normalized()
+		return Transform3D(Basis(up.cross(back).normalized(), up, back), cam * Vector3(0.15, -0.2, -0.46))
+	var frame := _frame()
+	var f: Vector3 = frame["f"]
+	var l: Vector3 = frame["l"]
+	# Out over the table and up beside the head: seated players lean in, so
+	# lower down the hand would sit under the chin, against the coat.
+	var p := _bone_world("RightArm") + f * 0.36 - l * 0.06 + Vector3.UP * 0.08
+	p.y = maxf(p.y, _felt_top + 0.12)
+	var face := _flat(Vector3(_duel.get("toward", p + f)) - p)
+	if camera != null:
+		face = (face + _flat(camera.global_position - p)).normalized() if face.dot(_flat(camera.global_position - p)) > -0.9 else face
+	var up := (Vector3.UP * 0.88 + f * 0.3).normalized()
+	var back := -(face - up * face.dot(up)).normalized()
+	return Transform3D(Basis(up.cross(back).normalized(), up, back), p)
+
+
+func _punch(fp: bool) -> Dictionary:
+	# Fist up past the shoulder, then down on its little-finger edge, thumb
+	# up and knuckles to the middle, with a small rebound off the felt.
+	var t := float(_exit["t"])
+	var frame := _frame()
+	var f: Vector3 = frame["f"]
+	var l: Vector3 = frame["l"]
+	var hammer := Basis(f.cross(-l).normalized(), f, -l)
+	var top: Vector3
+	var hit: Vector3
+	if fp:
+		# Kept to the right of the view so the sleeve stays low in frame.
+		top = camera.global_transform * Vector3(0.24, -0.05, -0.5)
+		hit = _fp_rest("Right").origin + f * 0.06
+	else:
+		top = _bone_world("RightArm") + f * 0.05 - l * 0.16 + Vector3.UP * 0.36
+		hit = Vector3(frame["chest"]) + f * 0.44 - l * 0.12
+	hit.y = _felt_top + FIST_DROP * scale.x
+	var p := hit
+	var basis := hammer
+	if t < FIST_TOP:
+		var u := _smooth(t / FIST_TOP)
+		var from = _exit.get("from")
+		var start: Transform3D = from if from is Transform3D else Transform3D(hammer, top)
+		p = start.origin.lerp(top, u)
+		basis = start.basis.orthonormalized().slerp(hammer, u)
+	elif t < FIST_HIT:
+		var u := (t - FIST_TOP) / (FIST_HIT - FIST_TOP)
+		p = top.lerp(hit, u * u)
+	else:
+		var after := t - FIST_HIT
+		p = hit + Vector3.UP * (0.012 * sin(PI * clampf(after / 0.2, 0.0, 1.0)) + 0.05 * _smooth(clampf((after - 0.5) / 0.3, 0.0, 1.0)))
+	if not fp:
+		look_point = hit
+		_lean_goal = 0.35
+	return {"xf": Transform3D(basis, p), "shape": "rock", "rate": -1.0}
+
+
+func _follow_gesture(gesture: Dictionary, delta: float) -> void:
+	var goal: Transform3D = gesture["xf"]
+	var rate := float(gesture.get("rate", 11.0))
+	if rate < 0.0:
+		_fp_xf["Right"] = goal
+	else:
+		_fp_xf["Right"] = Transform3D(_fp_xf["Right"]).interpolate_with(goal, _rate(rate, delta))
+	_fp_mix["Right"] = _shape_toward(_fp_mix["Right"], gesture["shape"], _rate(18.0, delta))
+
+
+func _coat_tone() -> Color:
+	# Middle colour of the fur on the character's own head and neck, in its
+	# texture: the fur that reads on screen, which the borrowed hands then
+	# match. Transparent when it cannot be read.
+	if _coats.has(_preset):
+		return _coats[_preset]
+	var want := {}
+	for bone in ["Head", "neck", "Neck"]:
+		var idx := _skel.find_bone(bone)
+		if idx >= 0:
+			want[idx] = true
+	var samples: Array = []
+	for node in find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		if mi == null or mi.mesh == null or mi.skin == null:
+			continue
+		var binds := {}
+		for b in mi.skin.get_bind_count():
+			var bone := mi.skin.get_bind_bone(b)
+			binds[b] = bone if bone >= 0 else _skel.find_bone(mi.skin.get_bind_name(b))
+		for surface in mi.mesh.get_surface_count():
+			var mat := mi.get_active_material(surface) as StandardMaterial3D
+			if mat == null or mat.albedo_texture == null:
+				continue
+			var image := mat.albedo_texture.get_image()
+			if image == null or image.is_empty():
+				continue
+			if image.is_compressed():
+				image.decompress()
+			var arrays := mi.mesh.surface_get_arrays(surface)
+			var uvs = arrays[Mesh.ARRAY_TEX_UV]
+			var bones = arrays[Mesh.ARRAY_BONES]
+			var weights = arrays[Mesh.ARRAY_WEIGHTS]
+			if uvs == null or bones == null or weights == null or uvs.is_empty():
+				continue
+			var per: int = bones.size() / uvs.size()
+			var size := Vector2(image.get_width(), image.get_height())
+			for v in uvs.size():
+				var best := -1
+				var best_w := 0.0
+				for k in per:
+					if weights[v * per + k] > best_w:
+						best_w = weights[v * per + k]
+						best = int(bones[v * per + k])
+				if best < 0 or not want.has(int(binds.get(best, best))):
+					continue
+				var uv: Vector2 = uvs[v]
+				var px := Vector2i(clampi(int(fposmod(uv.x, 1.0) * size.x), 0, int(size.x) - 1), clampi(int(fposmod(uv.y, 1.0) * size.y), 0, int(size.y) - 1))
+				samples.append(image.get_pixelv(px) * mat.albedo_color)
+	var tone := Color(0.0, 0.0, 0.0, 0.0)
+	if not samples.is_empty():
+		samples.sort_custom(func(a: Color, b: Color) -> bool: return a.get_luminance() < b.get_luminance())
+		tone = samples[samples.size() / 2]
+		tone.a = 1.0
+	_coats[_preset] = tone
+	return tone
+
+
+func _sleeve() -> float:
+	# Wrist showing between the coat sleeve and the fingered hand: the
+	# seated player's own reach out of the sleeves; an opponent's hands come
+	# almost straight out of theirs.
+	return (FP_SLEEVE if first_person else FPHands.SEATED_SLEEVE) * float(_hands.size)
+
+
+func _pose_walk(delta: float) -> void:
+	# Out of the chair into the rest pose, then a walk along the exit path:
+	# legs swing from the hip with the knee folding as each comes through,
+	# arms hang and swing against them, and the lower foot stays on the floor.
+	var t := float(_exit["t"]) - RISE_AT
+	var rise := _smooth(clampf(t / RISE_TIME, 0.0, 1.0))
+	var stride := clampf((t - RISE_TIME * 0.7) / 0.5, 0.0, 1.0)
+	for bone_name in _body:
+		var idx := _skel.find_bone(str(bone_name))
+		if idx < 0:
+			continue
+		var seated_q: Quaternion = _body[bone_name]
+		var stand_q: Quaternion = _stand.get(bone_name, seated_q)
+		_skel.set_bone_pose_rotation(idx, seated_q.slerp(stand_q, rise))
+	_skel.force_update_all_bone_transforms()
+	var phase := float(_exit["step"])
+	for k in 2:
+		var cycle := phase + PI * float(k)
+		_bend(SIDES[k] + "UpLeg", -0.42 * sin(cycle) * stride)
+		_bend(SIDES[k] + "Leg", 0.85 * pow(maxf(0.0, cos(cycle)), 1.3) * stride)
+	var frame := _frame()
+	var f: Vector3 = frame["f"]
+	var l: Vector3 = frame["l"]
+	for k in 2:
+		var side: String = SIDES[k]
+		var sign := 1.0 if side == "Left" else -1.0
+		var length := float(_upper.get(side, 0.25)) + float(_fore.get(side, 0.25))
+		var swing := 0.16 * sin(phase + PI * float(1 - k)) * stride
+		var shoulder := _bone_world(side + "Arm")
+		var wrist := shoulder + Vector3.DOWN * (length * 0.92) + f * swing + l * (0.06 * sign)
+		_reach(side, wrist, (-f + l * (0.3 * sign)).normalized())
+	_skel.force_update_all_bone_transforms()
+	if _fingered():
+		# Fingered hands hang off the sleeves, palms in, as they walk.
+		for k in 2:
+			var side: String = SIDES[k]
+			var sign := 1.0 if side == "Left" else -1.0
+			var joint := _bone_world(side + "Hand")
+			var along := (joint - _bone_world(side + "ForeArm")).normalized()
+			var out := l * sign
+			var back := (out - along * out.dot(along)).normalized()
+			_hands.place(side, Transform3D(Basis(along.cross(back).normalized(), along, back), joint + along * _sleeve()))
+			_hands.shape(side, {"relax": 1.0})
+	var lowest := INF
+	for bone_name in ["LeftToeBase", "RightToeBase", "LeftFoot", "RightFoot"]:
+		var point := _bone_world(bone_name)
+		if not is_inf(point.x):
+			lowest = minf(lowest, point.y)
+	if lowest < 100.0:
+		position.y -= lowest
+	_head = _bone_world("Head")
+	var path: Array = _exit["path"]
+	var leg := int(_exit["leg"])
+	if leg >= path.size():
+		vanish()
+		departed.emit()
+		return
+	if stride <= 0.0:
+		return
+	var goal: Vector3 = path[leg]
+	var to := Vector3(goal.x - position.x, 0.0, goal.z - position.z)
+	var step := WALK_SPEED * stride * delta
+	if to.length() <= maxf(step, 0.04):
+		_exit["leg"] = leg + 1
+	if to.length() > 0.001:
+		position += to.normalized() * minf(step, to.length())
+		rotation.y = lerp_angle(rotation.y, atan2(to.x, to.z), _rate(5.0, delta))
+	_exit["step"] = phase + delta * STEP_RATE * stride
+
+
+func _shape_toward(mix: Dictionary, key: String, w: float) -> Dictionary:
+	var out := {}
+	for name in mix:
+		var keep := float(mix[name]) * (1.0 - w)
+		if keep > 0.002:
+			out[name] = keep
+	out[key] = float(out.get(key, 0.0)) + w
+	return out
 
 
 func _scale_hand(bone_name: String, amount: float) -> void:
@@ -914,6 +1487,12 @@ func _warm_card(card: Node3D, on: bool) -> void:
 	if not on:
 		mesh.set_surface_override_material(0, null)
 		return
+	var shaded := mesh.get_active_material(0) as ShaderMaterial
+	if shaded != null:
+		var warm := shaded.duplicate() as ShaderMaterial
+		warm.set_shader_parameter("glow", 0.25)
+		mesh.set_surface_override_material(0, warm)
+		return
 	var source := mesh.get_active_material(0) as StandardMaterial3D
 	if source == null:
 		return
@@ -928,29 +1507,44 @@ func _layout_fan(delta: float) -> void:
 	var count := fan.size()
 	if count == 0:
 		return
-	var step := 0.042 if first_person else 0.07
-	var cap := 0.52 if first_person else 0.78
+	var step := 0.07
+	var cap := 0.78
+	var raised := 0.018
+	if fingered:
+		step = 0.1
+		cap = 0.62
+	if first_person:
+		# Opened wider while choosing so every corner index clears the card
+		# in front of it; the chosen card stands well proud of the rest.
+		step = lerpf(FP_STEP_WAIT, FP_STEP_PLAY, _present)
+		cap = lerpf(FP_SPREAD, FP_SPREAD_PLAY, _present)
+		raised = 0.032
 	var spread := minf(step * float(count - 1), cap)
+	# The fan turns about a point this far below the thumb, so the tops part
+	# much more than the bottoms; the front card stays where the thumb holds it.
+	var drop := lerpf(FP_DROP_WAIT, FP_DROP_PLAY, _present) if first_person else (0.02 if fingered else 0.0)
+	var front := Basis(Vector3.BACK, -spread * 0.5) * Vector3(0.0, drop, 0.0)
 	var k := _rate(13.0, delta)
 	for i in count:
 		var card: Node3D = fan[i]
 		var u := 0.5 if count == 1 else float(i) / float(count - 1)
-		var lift := 0.018 if card == selected else 0.0
-		if first_person:
-			_warm_card(card, card == selected)
-		var stack := 0.0016 * float(i)
+		var lift := raised if card == selected else 0.0
 		var goal: Transform3D
-		if first_person:
-			var open := lerpf(0.42, 1.0, 1.0 - _gather)
-			var size := lerpf(0.62, 1.0, _present)
-			var arc := minf(0.185 * float(count - 1), 2.15) * open * lerpf(0.78, 1.0, _present)
-			var rot := Basis(Vector3.BACK, arc * (0.5 - u))
-			goal = Transform3D(rot, rot * Vector3(0.0, CARD.y * 0.62 * size + lift, 0.0) + Vector3(0.0, 0.0, stack + lift * 0.2))
+		if _fingered():
+			# One flat stack, front card last, so cards never cut through
+			# each other.
+			if first_person:
+				_warm_card(card, card == selected)
+			var rot := Basis(Vector3.BACK, spread * (0.5 - u))
+			var pivot := Vector3(FPHands.PIVOT.x, FPHands.PIVOT.y + lift + drop, 0.0)
+			goal = Transform3D(rot, rot * pivot - front + Vector3(0.0, 0.0, -0.0009 * float(count - 1 - i)))
 		else:
 			var rot := Basis(Vector3.BACK, spread * (0.5 - u))
-			goal = Transform3D(rot, rot * Vector3(0.0, CARD.y * 0.32 + lift, 0.0) + Vector3(0.0, 0.0, stack))
+			goal = Transform3D(rot, rot * Vector3(0.0, CARD.y * 0.32 + lift, 0.0) + Vector3(0.0, 0.0, 0.0016 * float(i)))
 		var cur: Transform3D = _fan_local.get(card, goal)
-		cur = goal if first_person else cur.interpolate_with(goal, k)
+		cur = cur.interpolate_with(goal, k)
+		if _fingered():
+			cur.origin.z = goal.origin.z
 		_fan_local[card] = cur
 		card.global_transform = _fan_frame * cur
 
@@ -975,31 +1569,14 @@ func _paw_reach(side: String) -> float:
 func _carry() -> void:
 	if _held == null or not is_instance_valid(_held):
 		return
-	if first_person and camera != null:
-		var from: Transform3D = _act.get("card_from", _held.global_transform)
-		var aim: Vector3 = _act.get("aim", _fan_frame.origin)
-		if str(_act.get("kind", "")) == "take":
-			aim = _fan_frame.origin + _fan_frame.basis.y * (CARD.y * 0.4)
-		var u := clampf((float(_act.get("t", 0.0)) - 0.2) / 0.75, 0.0, 1.0)
-		var aim_at := aim
-		if str(_act.get("kind", "")) != "take":
-			aim_at.y = _felt_top + 0.012
-		var along := _smooth(u)
-		var pos := from.origin.lerp(aim_at, along)
-		pos.y = lerpf(from.origin.y, aim_at.y, clampf(along * 2.2, 0.0, 1.0))
-		var n := camera.global_position - pos
-		if n.length() < 0.05:
-			n = Vector3.UP
-		n = n.normalized()
-		var up := Vector3.UP - n * n.dot(Vector3.UP)
-		if up.length() < 0.01:
-			up = Vector3.FORWARD
-		up = up.normalized()
-		var x := up.cross(n).normalized()
-		_held.global_transform = Transform3D(Basis(x, up, n), pos)
-		return
-	var local := _held_from.interpolate_with(_held_to, _held_mix)
-	_held.global_transform = _grip_frame() * local
+	if _fingered():
+		_held.global_transform = _hands.world_frame("Right", _fp_held_local())
+	else:
+		var local := _held_from.interpolate_with(_held_to, _held_mix)
+		_held.global_transform = _grip_frame() * local
+	for under in _held_rest:
+		if is_instance_valid(under):
+			(under as Node3D).global_transform = _held.global_transform * Transform3D(_held_rest[under])
 
 
 func _mix(a: Dictionary, b: Dictionary, w: float) -> Dictionary:
@@ -1010,6 +1587,7 @@ func _mix(a: Dictionary, b: Dictionary, w: float) -> Dictionary:
 		"pole": _nlerp(a["pole"], b["pole"], w),
 		"contact": bool(b.get("contact", false)),
 		"plant": bool(b.get("plant", false)),
+		"wrist": bool(b.get("wrist", false)),
 	}
 
 

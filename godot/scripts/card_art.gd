@@ -5,26 +5,59 @@ const COLUMNS := 14
 const ROWS := 4
 const PAD := 5.0
 const SIZE := Vector2(0.096, 0.134)
+# Half the card stock's thickness: thin enough that cards stacked on the pile
+# or fanned in a hand never cut through each other.
+const HALF_THICK := 0.0002
+# Card stock under the table lamp. Ivory right below the lamp would burn out
+# to white next to the dark felt, taking the red ink and the backs' pattern
+# with it, so no single light gives a card more than `light_cap` (lights are
+# drawn one pass each, so the cap is per light); in dimmer light a card is
+# lit as usual. `glow` warms the card the player has chosen.
+const SHADER := """shader_type spatial;
+render_mode cull_back;
 
-var material: StandardMaterial3D
-var edge_material: StandardMaterial3D
+uniform sampler2D atlas : source_color, filter_linear_mipmap_anisotropic;
+uniform bool textured = true;
+uniform vec3 tint : source_color = vec3(1.0);
+uniform float light_cap = 0.25;
+uniform vec3 glow_color : source_color = vec3(0.86, 0.64, 0.3);
+uniform float glow = 0.0;
+
+void fragment() {
+	vec4 paint = textured ? texture(atlas, UV) : vec4(1.0);
+	ALBEDO = paint.rgb * tint;
+	ALPHA = paint.a;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+	ROUGHNESS = 0.75;
+	SPECULAR = 0.25;
+	EMISSION = glow_color * glow;
+}
+
+void light() {
+	vec3 lit = ATTENUATION * LIGHT_COLOR * clamp(dot(NORMAL, LIGHT), 0.0, 1.0) / PI;
+	float peak = max(lit.r, max(lit.g, lit.b));
+	DIFFUSE_LIGHT += peak > light_cap ? lit * (light_cap / peak) : lit;
+}
+"""
+
+var material: ShaderMaterial
+var edge_material: ShaderMaterial
 var atlas_ready := false
 var _meshes: Dictionary = {}
 var _port: SubViewport
 
 
 func _ready() -> void:
-	material = StandardMaterial3D.new()
-	material.roughness = 0.52
-	material.metallic_specular = 0.32
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	material.alpha_scissor_threshold = 0.5
-	material.albedo_color = Color("F7F2E4")
-	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-	edge_material = StandardMaterial3D.new()
-	edge_material.albedo_color = Color("E6DCC4")
-	edge_material.roughness = 0.74
-	edge_material.metallic = 0.0
+	var shader := Shader.new()
+	shader.code = SHADER
+	material = ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("textured", false)
+	material.set_shader_parameter("tint", Color("F7F2E4"))
+	edge_material = ShaderMaterial.new()
+	edge_material.shader = shader
+	edge_material.set_shader_parameter("textured", false)
+	edge_material.set_shader_parameter("tint", Color("E6DCC4"))
 	_port = SubViewport.new()
 	_port.size = Vector2i(CELL.x * COLUMNS, CELL.y * ROWS)
 	_port.transparent_bg = true
@@ -49,8 +82,9 @@ func _bake() -> void:
 		return
 	image.convert(Image.FORMAT_RGBA8)
 	image.generate_mipmaps()
-	material.albedo_color = Color.WHITE
-	material.albedo_texture = ImageTexture.create_from_image(image)
+	material.set_shader_parameter("atlas", ImageTexture.create_from_image(image))
+	material.set_shader_parameter("tint", Color.WHITE)
+	material.set_shader_parameter("textured", true)
 	atlas_ready = true
 	_port.queue_free()
 	_port = null
@@ -73,7 +107,7 @@ func _mesh(rank: int, suit: int) -> ArrayMesh:
 	var back := _uv(13, 0)
 	var w := SIZE.x * 0.5
 	var h := SIZE.y * 0.5
-	var e := 0.0011
+	var e := HALF_THICK
 	var verts := PackedVector3Array([
 		Vector3(-w, h, e), Vector3(w, h, e), Vector3(w, -h, e), Vector3(-w, -h, e),
 		Vector3(w, h, -e), Vector3(-w, h, -e), Vector3(-w, -h, -e), Vector3(w, -h, -e),
@@ -176,18 +210,38 @@ class Painter extends Control:
 		var ink := LAC if suit == 1 or suit == 2 else INK
 		var label: String = RANKS[rank]
 		var wide := label.length() > 1
+		var worth := _worth(rank)
 		_sheet(rect, IVORY, EDGE, 14, 2)
-		_index(rect.position + Vector2(25, 32), label, wide, suit, ink)
+		# A fanned hand shows only a strip down each card's left edge, so the
+		# corner index is large and carries the count when it differs from
+		# the face (A, J, K).
+		_index(rect.position + Vector2(27, 36), label, wide, suit, ink, worth)
 		draw_set_transform(rect.end, PI, Vector2.ONE)
-		_index(Vector2(25, 32), label, wide, suit, ink)
+		_index(Vector2(27, 36), label, wide, suit, ink, worth)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		var mid := rect.get_center()
-		_text(mid + Vector2(0, -22), label, 86 if wide else 106, ink)
-		_suit(suit, mid + Vector2(0, 60), 58.0, ink)
+		_text(mid + Vector2(0, -20), label, 86 if wide else 106, ink)
+		_suit(suit, mid + Vector2(0, 52), 50.0, ink)
+		if worth != "":
+			draw_circle(mid + Vector2(0, 92), 17.0, BRASS)
+			_text(mid + Vector2(0, 92), worth, 20, IVORY)
 
-	func _index(at: Vector2, label: String, wide: bool, suit: int, ink: Color) -> void:
-		_text(at, label, 32 if wide else 40, ink)
-		_suit(suit, at + Vector2(0, 38), 28.0, ink)
+	func _index(at: Vector2, label: String, wide: bool, suit: int, ink: Color, worth: String) -> void:
+		_text(at, label, 40 if wide else 54, ink)
+		_suit(suit, at + Vector2(0, 46), 34.0, ink)
+		if worth != "":
+			_text(at + Vector2(0, 82), worth, 24, BRASS.darkened(0.25))
+
+	func _worth(rank: int) -> String:
+		# Points this card counts for, where the face does not say so.
+		match rank:
+			0:
+				return "1"
+			10:
+				return "15"
+			12:
+				return "20"
+		return ""
 
 	func _back(rect: Rect2) -> void:
 		_sheet(rect, PAPER, EDGE, 14, 2)
@@ -199,7 +253,7 @@ class Painter extends Control:
 		while y < inner.end.y - 12.0:
 			var x := inner.position.x + 16.0 + (step * 0.5 if row % 2 == 1 else 0.0)
 			while x < inner.end.x - 12.0:
-				_lozenge(Vector2(x, y), 6.5, Color(0.79, 0.64, 0.30, 0.55))
+				_lozenge(Vector2(x, y), 6.5, Color(0.84, 0.67, 0.31, 0.75))
 				x += step
 			y += step * 0.75
 			row += 1
@@ -210,7 +264,7 @@ class Painter extends Control:
 
 	func _lozenge(c: Vector2, r: float, color: Color) -> void:
 		var pts := PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.75, 0), c + Vector2(0, r), c + Vector2(-r * 0.75, 0), c + Vector2(0, -r)])
-		draw_polyline(pts, color, 1.4, true)
+		draw_polyline(pts, color, 2.2, true)
 
 	func _suit(suit: int, c: Vector2, s: float, color: Color) -> void:
 		match suit:

@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1_feel")
-camera_fov = 56.0
+camera_fov = 62.0
 camera_near = 0.05
 eye_lift = 0.02
 breath_meters = 0.004
@@ -19,8 +19,8 @@ look_yaw_limit = 1.4
 look_pitch_min = -0.48
 look_pitch_max = 0.62
 inspect_pitch = -0.16
-reveal_pitch = -0.07
-reveal_dolly = 0.06
+reveal_pitch = -0.1
+reveal_dolly = 0.12
 body_follow = 0.22
 look_spine = 0.15
 look_neck = 0.25
@@ -36,7 +36,7 @@ lamp_color = Color(1, 0.72, 0.45, 1)
 lamp_energy = 3.6
 lamp_angle = 48.0
 ambient_color = Color(0.4, 0.29, 0.2, 1)
-ambient_energy = 0.74
+ambient_energy = 0.95
 fill_energy = 0.36
 glow_strength = 0.14
 contrast = 1.03

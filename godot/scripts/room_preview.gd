@@ -4,6 +4,8 @@ signal card_sound(kind: String)
 
 const SeatActor := preload("res://scripts/seat_actor.gd")
 const CardTable := preload("res://scripts/card_table.gd")
+const Dealer := preload("res://scripts/dealer.gd")
+const Parlor := preload("res://scripts/parlor.gd")
 const TABLE_WIDTH := 1.7
 const CHAIR_HEIGHT := 0.95
 const LAMP_WIDTH := 0.38
@@ -13,17 +15,38 @@ const FELT_RADIUS := 0.755
 const SHADE_BOTTOM := 1.62
 const CAST := [
 	{"id": 2, "name": "kaya", "angle": 180.0, "style": "lead"},
-	{"id": 1, "name": "sis", "angle": 250.0, "style": "watch"},
-	{"id": 3, "name": "karaca", "angle": 110.0, "style": "settle"},
+	{"id": 1, "name": "sis", "angle": 270.0, "style": "watch"},
+	{"id": 3, "name": "karaca", "angle": 90.0, "style": "settle"},
 ]
-const PLAYER := {"id": 0, "name": "kok", "angle": 0.0, "style": "player"}
-const SEAT_NAME := {1: "Sis", 2: "Kaya", 3: "Karaca"}
+const ROSTER := [
+	{"id": "kaya", "name": "Kaya"},
+	{"id": "sis", "name": "Sis"},
+	{"id": "kok", "name": "Kök"},
+	{"id": "karaca", "name": "Karaca"},
+	{"id": "sirtlan", "name": "Sırtlan"},
+	{"id": "dere", "name": "Dere"},
+]
 const SEAT_TUCK := 0.04
 const _FEEL_PATH := "res://data/feel.tres"
+# Walking out: the ring around the table clear of the chairs, the doorway in
+# the wall behind the seated player, and for that player the seconds from
+# getting up to the door and how long the screen takes to go dark there.
+const EXIT_RING := 1.85
+const DOOR := Vector3(0.0, 0.0, 4.3)
+const EXIT_WALK := 3.6
+const EXIT_FADE := 1.0
+const CHAIR_PUSH := 0.32
+# The croupier stands at the rim in the gap between the far seat and the one
+# on the right, so the seated player sees every card it handles.
+const DEALER_ANGLE := 135.0
+const DEALER_RADIUS := 1.17
 
 var play_mode := false
 var _actors: Dictionary = {}
 var _table: Node3D
+var _chairs: Array[Node3D] = []
+var _player_preset := "kok"
+var _seat_titles := {}
 var _feel_data: Resource
 var _clock := 0.0
 var _cam_rest := Transform3D.IDENTITY
@@ -37,6 +60,15 @@ var _pitch_vel := 0.0
 var _inspect := 0.0
 var _inspect_goal := 0.0
 var _reveal := 0.0
+var _seat_chairs := {}
+var _shake := 0.0
+var _follow := -1
+var _exit_t := -1.0
+var _exit_from := Transform3D.IDENTITY
+var _exit_ready := false
+var _door_shut := false
+var _blackout := 0.0
+var _dealer: Node3D
 
 
 func _ready() -> void:
@@ -50,7 +82,10 @@ func _ready() -> void:
 	_sit_on_floor(table, FELT_Y, true)
 	if chair != null:
 		_fit_height(chair, CHAIR_HEIGHT)
-		_seat_cast(_place_chairs(chair))
+		_chairs = _place_chairs(chair)
+		_seat_cast(_chairs)
+	if play_mode:
+		_place_dealer()
 	if lamp != null:
 		_fit_xz(lamp, LAMP_WIDTH)
 		_center_xz(lamp)
@@ -58,39 +93,144 @@ func _ready() -> void:
 		lamp.position.y += SHADE_BOTTOM - lamp_box.position.y
 	_cover_felt()
 	_dress_room()
-	var camera := $Camera3D as Camera3D
 	var feel := _feel()
 	_grade(feel)
-	if play_mode and _actors.has(0):
-		var me: Node3D = _actors[0]
-		var eye: Vector3 = me.eye_point()
-		camera.global_position = eye + Vector3(0.0, float(feel.eye_lift), 0.0)
-		camera.fov = float(feel.camera_fov)
-		camera.near = float(feel.camera_near)
-		camera.look_at(Vector3(0.0, FELT_TOP + 0.2, 0.22))
-		_cam_rest = camera.global_transform
-		_cam_live = true
-		me.make_first_person(camera)
+	$SpotLight3D.position = Vector3(0.0, SHADE_BOTTOM - 0.05, 0.0)
+	$SpotLight3D.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
+	if play_mode:
+		_open_table()
 	else:
+		var camera := $Camera3D as Camera3D
 		var seat_z := TABLE_WIDTH * 0.5 + 0.48
 		camera.position = Vector3(0.0, 1.18, seat_z)
 		camera.fov = 62.0
 		camera.look_at(Vector3(0.0, 1.0, -0.02))
-	$SpotLight3D.position = Vector3(0.0, SHADE_BOTTOM - 0.05, 0.0)
-	$SpotLight3D.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
-	if play_mode:
-		for id in _actors:
-			_actors[id].camera = camera
-	if play_mode and _actors.size() == 4:
-		_table = CardTable.new()
-		_table.name = "CardTable"
-		add_child(_table)
-		var dirs := {}
-		for id in _actors:
-			var at: Vector3 = (_actors[id] as Node3D).global_position
-			dirs[id] = Vector3(at.x, 0.0, at.z).normalized()
-		_table.setup(_actors, dirs, camera, FELT_TOP)
-		_table.sound.connect(func(kind: String): card_sound.emit(kind))
+
+
+func roster() -> Array:
+	return ROSTER
+
+
+func player_preset() -> String:
+	return _player_preset
+
+
+func set_player(preset: String) -> void:
+	if preset == _player_preset or not play_mode:
+		return
+	var known := false
+	for entry in ROSTER:
+		if str(entry["id"]) == preset:
+			known = true
+	if not known:
+		return
+	_player_preset = preset
+	_clear_cast()
+	_reset_exits()
+	if not _chairs.is_empty():
+		_seat_cast(_chairs)
+	_open_table()
+
+
+func reset_seats() -> void:
+	# Everyone back at the table after a sitting in which someone walked out.
+	if not play_mode:
+		return
+	var stale := _exit_t >= 0.0 or _blackout > 0.0
+	for actor in _actors.values():
+		if actor.gone or actor.leaving():
+			stale = true
+	if not stale:
+		return
+	_clear_cast()
+	_reset_exits()
+	if not _chairs.is_empty():
+		_seat_cast(_chairs)
+	_open_table()
+
+
+func blackout() -> float:
+	return _blackout
+
+
+func _reset_exits() -> void:
+	for id in _seat_chairs:
+		var chair: Node3D = _seat_chairs[id][0]
+		if is_instance_valid(chair):
+			chair.transform = _seat_chairs[id][1]
+	_seat_chairs.clear()
+	_shake = 0.0
+	_follow = -1
+	_exit_t = -1.0
+	_exit_ready = false
+	_door_shut = false
+	_blackout = 0.0
+
+
+func seat_preset(id: int) -> String:
+	for spec in _play_specs():
+		if int(spec["id"]) == id:
+			return str(spec["name"])
+	return _player_preset
+
+
+func seat_names() -> Array:
+	var names: Array = []
+	for id in [0, 1, 2, 3]:
+		names.append(str(_seat_titles.get(id, "")))
+	return names
+
+
+func _clear_cast() -> void:
+	for id in _actors.keys():
+		var actor: Node = _actors[id]
+		if is_instance_valid(actor):
+			actor.free()
+	_actors.clear()
+	if _table != null and is_instance_valid(_table):
+		_table.free()
+		_table = null
+
+
+func _open_table() -> void:
+	if not play_mode or not _actors.has(0):
+		return
+	var camera := $Camera3D as Camera3D
+	var feel := _feel()
+	var me: Node3D = _actors[0]
+	var eye: Vector3 = me.eye_point()
+	var look := Vector3(0.0, FELT_TOP + 0.2, 0.22)
+	var back := eye - look
+	back.y = 0.0
+	back = back.normalized()
+	camera.global_position = eye + back * 0.48 + Vector3(0.0, 0.34, 0.0)
+	camera.fov = float(feel.camera_fov)
+	camera.near = float(feel.camera_near)
+	camera.look_at(look)
+	_cam_rest = camera.global_transform
+	_cam_live = true
+	_aim_yaw = 0.0
+	_aim_pitch = 0.0
+	_look_yaw = 0.0
+	_look_pitch = 0.0
+	_yaw_vel = 0.0
+	_pitch_vel = 0.0
+	me.make_first_person(camera)
+	for id in _actors:
+		_actors[id].camera = camera
+		if id != 0:
+			_actors[id].make_fingered()
+	if _actors.size() != 4:
+		return
+	_table = CardTable.new()
+	_table.name = "CardTable"
+	add_child(_table)
+	var dirs := {}
+	for id in _actors:
+		var at: Vector3 = (_actors[id] as Node3D).global_position
+		dirs[id] = Vector3(at.x, 0.0, at.z).normalized()
+	_table.setup(_actors, dirs, camera, FELT_TOP, _dealer)
+	_table.sound.connect(func(kind: String): card_sound.emit(kind))
 
 
 func add_look(relative: Vector2) -> void:
@@ -134,6 +274,13 @@ func _process(delta: float) -> void:
 		return
 	var step := minf(delta, 0.05)
 	_clock += delta
+	_push_chairs(delta)
+	if _exit_t >= 0.0:
+		_exit_t += delta
+		if _exit_t >= SeatActor.RISE_AT:
+			_walk_camera(_exit_t - SeatActor.RISE_AT)
+			return
+	_follow_walker()
 	var feel := _feel()
 	var yaw_state := _spring(_look_yaw, _yaw_vel, _aim_yaw, float(feel.look_omega), step)
 	var pitch_state := _spring(_look_pitch, _pitch_vel, _aim_pitch, float(feel.look_omega), step)
@@ -150,19 +297,96 @@ func _process(delta: float) -> void:
 		sway = sin(_clock * 0.37) * float(feel.sway_meters)
 		lean = sin(_clock * 0.53 + 1.2) * float(feel.sway_radians)
 	var pitch := _look_pitch + float(feel.inspect_pitch) * _inspect + float(feel.reveal_pitch) * _reveal
-	var basis := Basis(Vector3.UP, _look_yaw + lean) * _cam_rest.basis * Basis(Vector3.RIGHT, pitch + lean * 0.65)
+	_shake = maxf(0.0, _shake - step * 2.4)
+	var jolt := _shake * _shake
+	var basis := Basis(Vector3.UP, _look_yaw + lean) * _cam_rest.basis * Basis(Vector3.RIGHT, pitch + lean * 0.65 - 0.03 * jolt * sin(_clock * 57.0))
 	var shift := _cam_rest.basis * Vector3(0.0, -0.02 * _reveal, -float(feel.reveal_dolly) * _reveal)
+	shift += Vector3(sin(_clock * 71.0), cos(_clock * 53.0), 0.0) * (0.009 * jolt)
 	var camera := $Camera3D as Camera3D
 	camera.global_transform = Transform3D(basis, _cam_rest.origin + Vector3(sway, breath, sway * 0.35) + shift)
 	if _actors.has(0):
 		_actors[0].set_look_yaw(_look_yaw * float(feel.body_follow))
 
 
+func _follow_walker() -> void:
+	# Turn the view after whoever is walking out, as far as the head turns;
+	# the croupier watches them go too.
+	if _follow < 0 or not _actors.has(_follow):
+		return
+	var walker: Node3D = _actors[_follow]
+	if _dealer != null and not walker.gone:
+		_dealer.look_point = walker.head_point()
+	if walker.gone:
+		_follow = -1
+		_aim_yaw = 0.0
+		_aim_pitch = 0.0
+		return
+	if not walker.standing():
+		return
+	var ahead := -_cam_rest.basis.z
+	var to: Vector3 = walker.head_point() - _cam_rest.origin
+	var yaw := Vector3(ahead.x, 0.0, ahead.z).signed_angle_to(Vector3(to.x, 0.0, to.z), Vector3.UP)
+	if not is_finite(yaw):
+		return
+	var limit := float(_feel().look_yaw_limit)
+	_aim_yaw = clampf(yaw, -limit, limit)
+	_aim_pitch = 0.08
+
+
+func _walk_camera(t: float) -> void:
+	# The seated player gets up, turns to the door behind them and walks to
+	# it while the room goes dark.
+	var camera := $Camera3D as Camera3D
+	if not _exit_ready:
+		_exit_ready = true
+		_exit_from = camera.global_transform
+	var from_ahead := -_exit_from.basis.z
+	var yaw0 := atan2(-from_ahead.x, -from_ahead.z)
+	var pitch0 := asin(clampf(from_ahead.y, -1.0, 1.0))
+	var rise := _ease(t / 0.9)
+	var turn := _ease((t - 0.5) / 1.2)
+	var walk := _ease((t - 1.3) / (EXIT_WALK - 1.3))
+	var back := Vector3(_exit_from.origin.x, 0.0, _exit_from.origin.z).normalized()
+	var origin := _exit_from.origin + Vector3.UP * (0.36 * rise) + back * (0.25 * rise)
+	var to_door := DOOR - origin
+	var yaw_door := atan2(-to_door.x, -to_door.z)
+	origin = origin.lerp(Vector3(DOOR.x, origin.y, DOOR.z - 0.6), walk)
+	origin.y += 0.012 * sin(t * 9.0) * clampf((t - 1.3) * 3.0, 0.0, 1.0) * (1.0 - walk)
+	var pitch := lerpf(pitch0, -0.04, rise)
+	camera.global_transform = Transform3D(Basis.from_euler(Vector3(pitch, lerp_angle(yaw0, yaw_door, turn), 0.0)), origin)
+	_blackout = _ease((t - (EXIT_WALK - EXIT_FADE * 0.6)) / EXIT_FADE)
+	if not _door_shut and t >= EXIT_WALK:
+		_door_shut = true
+		card_sound.emit("door")
+
+
+func _ease(u: float) -> float:
+	var x := clampf(u, 0.0, 1.0)
+	return x * x * (3.0 - 2.0 * x)
+
+
+func _push_chairs(delta: float) -> void:
+	# A chair scrapes back as its player gets up.
+	for id in _seat_chairs:
+		if id == 0 or not _actors.has(id):
+			continue
+		var actor: Node3D = _actors[id]
+		if not (actor.gone or actor.standing()):
+			continue
+		var chair: Node3D = _seat_chairs[id][0]
+		var rest: Transform3D = _seat_chairs[id][1]
+		var out := Vector3(rest.origin.x, 0.0, rest.origin.z).normalized()
+		var goal := rest.origin + out * CHAIR_PUSH
+		chair.position = chair.position.lerp(goal, 1.0 - exp(-7.0 * delta))
+
+
 func _spring(current: float, velocity: float, target: float, omega: float, delta: float) -> Vector2:
-	var accel := omega * omega * (target - current) - 2.0 * omega * velocity
-	velocity += accel * delta
-	current += velocity * delta
-	return Vector2(current, velocity)
+	# Exact step of the critically damped spring. Stepping it by Euler blew
+	# up once omega * delta passed about 2 (slow frames), and the camera with it.
+	var off := current - target
+	var k := velocity + omega * off
+	var decay := exp(-omega * delta)
+	return Vector2(target + (off + k * delta) * decay, (velocity - omega * k * delta) * decay)
 
 
 func _feel() -> Resource:
@@ -191,6 +415,12 @@ func _grade(feel: Resource) -> void:
 	env.adjustment_enabled = true
 	env.adjustment_contrast = float(feel.contrast)
 	env.adjustment_saturation = float(feel.saturation)
+	# A little haze so the far wall falls away and the lamp's beam shows.
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.32, 0.22, 0.15)
+	env.fog_light_energy = 0.6
+	env.fog_density = 0.03
+	env.fog_sky_affect = 0.0
 	var spot := $SpotLight3D as SpotLight3D
 	spot.light_color = feel.lamp_color
 	spot.light_energy = float(feel.lamp_energy)
@@ -204,147 +434,10 @@ func _dress_room() -> void:
 		var old := get_node_or_null(node_name)
 		if old:
 			old.visible = false
-	var parlor := Node3D.new()
+	var parlor := Parlor.new()
 	parlor.name = "Parlor"
 	add_child(parlor)
-	var half := 4.2
-	var height := 2.95
-	_parlor_floor(parlor, half)
-	_parlor_shell(parlor, half, height)
-	_parlor_bar(parlor)
-	_parlor_sconce(parlor, Vector3(-1.45, 1.78, -3.78))
-	_parlor_sconce(parlor, Vector3(1.45, 1.78, -3.78))
-	_parlor_sconce(parlor, Vector3(-3.82, 1.7, 0.35))
-	_parlor_sconce(parlor, Vector3(3.82, 1.7, -0.55))
-	_parlor_frame(parlor, Vector3(-4.08, 1.58, -1.15), Vector3(1, 0, 0))
-	_parlor_frame(parlor, Vector3(4.08, 1.42, 1.05), Vector3(-1, 0, 0))
-	_parlor_door(parlor, half)
-
-
-func _parlor_floor(parlor: Node3D, half: float) -> void:
-	var tones := [
-		Color(0.28, 0.16, 0.08),
-		Color(0.24, 0.13, 0.07),
-		Color(0.31, 0.18, 0.09),
-		Color(0.22, 0.12, 0.06),
-	]
-	var boards := 14
-	var width := half * 2.0 / float(boards)
-	for i in boards:
-		var shade: Color = tones[i % tones.size()]
-		var z := -half + width * (float(i) + 0.5)
-		_solid(parlor, Vector3(half * 2.0, 0.08, width * 0.96), Vector3(0.0, -0.04, z), shade, 0.84)
-
-
-func _parlor_shell(parlor: Node3D, half: float, height: float) -> void:
-	var plaster := Color(0.42, 0.26, 0.16)
-	var wood := Color(0.2, 0.11, 0.06)
-	var beam := Color(0.14, 0.08, 0.045)
-	var thick := 0.16
-	var span := half * 2.0 + thick
-	_solid(parlor, Vector3(span, height, thick), Vector3(0.0, height * 0.5, -half), plaster, 0.9)
-	_solid(parlor, Vector3(span, height, thick), Vector3(0.0, height * 0.5, half), plaster, 0.9)
-	_solid(parlor, Vector3(thick, height, span), Vector3(-half, height * 0.5, 0.0), plaster, 0.9)
-	_solid(parlor, Vector3(thick, height, span), Vector3(half, height * 0.5, 0.0), plaster, 0.9)
-	var rail := 0.92
-	_solid(parlor, Vector3(span - 0.04, rail, 0.06), Vector3(0.0, rail * 0.5, -half + 0.1), wood, 0.72)
-	_solid(parlor, Vector3(span - 0.04, rail, 0.06), Vector3(0.0, rail * 0.5, half - 0.1), wood, 0.72)
-	_solid(parlor, Vector3(0.06, rail, span - 0.2), Vector3(-half + 0.1, rail * 0.5, 0.0), wood, 0.72)
-	_solid(parlor, Vector3(0.06, rail, span - 0.2), Vector3(half - 0.1, rail * 0.5, 0.0), wood, 0.72)
-	_solid(parlor, Vector3(span, 0.1, span), Vector3(0.0, height, 0.0), beam, 0.8)
-	for i in 4:
-		var x := -half * 0.72 + float(i) * half * 0.48
-		_solid(parlor, Vector3(0.12, 0.08, span - 0.3), Vector3(x, height - 0.08, 0.0), wood, 0.7)
-
-
-func _parlor_bar(parlor: Node3D) -> void:
-	var wood := Color(0.24, 0.13, 0.07)
-	var top := Color(0.34, 0.2, 0.1)
-	_solid(parlor, Vector3(3.4, 0.96, 0.48), Vector3(0.0, 0.48, -3.62), wood, 0.68)
-	_solid(parlor, Vector3(3.5, 0.06, 0.56), Vector3(0.0, 0.99, -3.6), top, 0.46)
-	var bottles := [
-		Color(0.42, 0.2, 0.08),
-		Color(0.12, 0.28, 0.16),
-		Color(0.18, 0.1, 0.08),
-		Color(0.55, 0.32, 0.12),
-		Color(0.1, 0.22, 0.18),
-	]
-	for i in bottles.size():
-		var x := -1.15 + float(i) * 0.55
-		_bottle(parlor, Vector3(x, 1.16, -3.62), bottles[i], 0.16 + float(i % 2) * 0.05)
-	_solid(parlor, Vector3(1.15, 0.72, 0.04), Vector3(0.0, 1.72, -4.02), Color(0.1, 0.07, 0.05), 0.4)
-	_solid(parlor, Vector3(1.02, 0.58, 0.02), Vector3(0.0, 1.72, -3.99), Color(0.16, 0.18, 0.2), 0.18)
-
-
-func _parlor_sconce(parlor: Node3D, at: Vector3) -> void:
-	_solid(parlor, Vector3(0.16, 0.28, 0.08), at, Color(0.45, 0.3, 0.14), 0.4)
-	var bulb := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.05
-	sphere.height = 0.1
-	var glass := StandardMaterial3D.new()
-	glass.albedo_color = Color(1.0, 0.78, 0.45)
-	glass.emission_enabled = true
-	glass.emission = Color(1.0, 0.62, 0.28)
-	glass.emission_energy_multiplier = 1.4
-	sphere.material = glass
-	bulb.mesh = sphere
-	bulb.position = at + Vector3(0.0, -0.08, 0.08)
-	parlor.add_child(bulb)
-	var light := OmniLight3D.new()
-	light.position = bulb.position
-	light.light_color = Color(1.0, 0.68, 0.38)
-	light.light_energy = 0.55
-	light.omni_range = 3.4
-	light.shadow_enabled = false
-	parlor.add_child(light)
-
-
-func _parlor_frame(parlor: Node3D, at: Vector3, inward: Vector3) -> void:
-	var wide := absf(inward.x) > 0.5
-	var frame_size := Vector3(0.05, 0.96, 0.78) if wide else Vector3(0.78, 0.96, 0.05)
-	var art_size := Vector3(0.02, 0.74, 0.6) if wide else Vector3(0.6, 0.74, 0.02)
-	_solid(parlor, frame_size, at, Color(0.32, 0.2, 0.1), 0.5)
-	_solid(parlor, art_size, at + inward * 0.025, Color(0.5, 0.3, 0.16), 0.88)
-
-
-func _parlor_door(parlor: Node3D, half: float) -> void:
-	var jamb := Color(0.22, 0.12, 0.06)
-	var door := Color(0.16, 0.09, 0.05)
-	var z := half - 0.08
-	_solid(parlor, Vector3(1.15, 2.15, 0.08), Vector3(0.0, 1.05, z), jamb, 0.7)
-	_solid(parlor, Vector3(0.92, 1.92, 0.06), Vector3(0.0, 0.98, z - 0.02), door, 0.62)
-
-
-func _bottle(parlor: Node3D, at: Vector3, color: Color, tall: float) -> void:
-	var node := MeshInstance3D.new()
-	var cylinder := CylinderMesh.new()
-	cylinder.top_radius = 0.035
-	cylinder.bottom_radius = 0.045
-	cylinder.height = tall
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.28
-	mat.metallic = 0.05
-	cylinder.material = mat
-	node.mesh = cylinder
-	node.position = at
-	parlor.add_child(node)
-
-
-func _solid(parlor: Node3D, size: Vector3, at: Vector3, color: Color, rough: float) -> MeshInstance3D:
-	var node := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = rough
-	mat.metallic = 0.0
-	box.material = mat
-	node.mesh = box
-	node.position = at
-	parlor.add_child(node)
-	return node
+	parlor.build(4.2, 2.95, Vector3(0.0, SHADE_BOTTOM, 0.0))
 
 
 func _table_info() -> Dictionary:
@@ -407,7 +500,9 @@ func _place_chairs(source: Node3D) -> Array[Node3D]:
 	var front := box.size.z * 0.5
 	var distance := TABLE_WIDTH * 0.5 - SEAT_TUCK + front
 	var feet_y := source.position.y
-	var angles: Array[float] = [180.0, 250.0, 110.0]
+	# Four places square round the table, a quarter turn apart, as a table
+	# laid for four players is.
+	var angles: Array[float] = [180.0, 270.0, 90.0]
 	if play_mode:
 		angles.append(0.0)
 	var copies: Array[Node3D] = [source]
@@ -426,10 +521,31 @@ func _place_chairs(source: Node3D) -> Array[Node3D]:
 	return copies
 
 
+func _play_specs() -> Array:
+	var others: Array[String] = []
+	for entry in ROSTER:
+		var preset := str(entry["id"])
+		if preset != _player_preset:
+			others.append(preset)
+	return [
+		{"id": 2, "name": others[0], "angle": 180.0, "style": "lead"},
+		{"id": 1, "name": others[1], "angle": 270.0, "style": "watch"},
+		{"id": 3, "name": others[2], "angle": 90.0, "style": "settle"},
+		{"id": 0, "name": _player_preset, "angle": 0.0, "style": "player"},
+	]
+
+
+func _title_for(preset: String) -> String:
+	for entry in ROSTER:
+		if str(entry["id"]) == preset:
+			return str(entry["name"])
+	return preset
+
+
 func _seat_cast(chairs: Array[Node3D]) -> void:
 	var specs: Array = CAST.duplicate()
 	if play_mode:
-		specs.append(PLAYER)
+		specs = _play_specs()
 	for spec in specs:
 		var chair := _chair_nearest(chairs, float(spec["angle"]))
 		if chair == null:
@@ -449,7 +565,41 @@ func _seat_cast(chairs: Array[Node3D]) -> void:
 		actor.set("driven", play_mode)
 		actor.call("setup", str(spec["name"]), str(spec["style"]), _table_info())
 		if play_mode:
-			_actors[int(spec["id"])] = actor
+			var seat_id := int(spec["id"])
+			_actors[seat_id] = actor
+			_seat_titles[seat_id] = _title_for(str(spec["name"]))
+			_seat_chairs[seat_id] = [chair, chair.transform]
+			actor.connect("thumped", _on_thump)
+			actor.connect("departed", _on_departed.bind(seat_id))
+
+
+func _place_dealer() -> void:
+	var packed: PackedScene = load("res://assets/characters/krupiye.glb")
+	if packed == null:
+		return
+	_dealer = packed.instantiate() as Node3D
+	_dealer.set_script(Dealer)
+	add_child(_dealer)
+	var radians := deg_to_rad(DEALER_ANGLE)
+	_dealer.position = Vector3(sin(radians), 0.0, cos(radians)) * DEALER_RADIUS
+	_dealer.rotation = Vector3(0.0, radians + PI, 0.0)
+	_dealer.call("setup", _table_info())
+	_dealer.connect("sound", func(kind: String): card_sound.emit(kind))
+	# Black feathers stand outside the lamp's cone: a soft warm fill from the
+	# table side and a cool rim from behind lift the crow off the wall.
+	var out := Vector3(sin(radians), 0.0, cos(radians))
+	var fill := OmniLight3D.new()
+	fill.light_color = Color(1.0, 0.78, 0.55)
+	fill.light_energy = 0.7
+	fill.omni_range = 1.6
+	fill.position = out * (DEALER_RADIUS - 0.75) + Vector3.UP * 1.45
+	add_child(fill)
+	var rim := OmniLight3D.new()
+	rim.light_color = Color(0.62, 0.7, 0.95)
+	rim.light_energy = 0.9
+	rim.omni_range = 1.3
+	rim.position = out * (DEALER_RADIUS + 0.55) + Vector3.UP * 1.7
+	add_child(rim)
 
 
 func _chair_nearest(chairs: Array[Node3D], degrees: float) -> Node3D:
@@ -555,6 +705,100 @@ func _matte(root: Node3D) -> void:
 func sync_match(game: Match, in_match: bool, delta: float) -> void:
 	if _table != null:
 		_table.sync(game, in_match, delta)
+	_stage_duel(game, in_match)
+
+
+func _stage_duel(game: Match, in_match: bool) -> void:
+	# The throw after a hand, and whoever loses it from last place walking out.
+	if not play_mode or _actors.size() != 4:
+		return
+	var seated := in_match and game.players.size() == Match.SEATS
+	var dueling := seated and game.phase == Match.PHASE_DUEL and game.duel_loser >= 0 and game.duel_winner >= 0
+	for id in _actors:
+		var actor: Node3D = _actors[id]
+		if actor.gone or actor.leaving():
+			continue
+		if not seated:
+			actor.duel_rest()
+			continue
+		var storming: bool = dueling and game.duel_out and game.duel_loser == id
+		if game.players[id].out and not storming:
+			actor.vanish()
+			continue
+		if dueling and _dealer != null and not _dealer.busy():
+			_dealer.look_point = (_eye_of(game.duel_loser) + _eye_of(game.duel_winner)) * 0.5
+		if not dueling or (id != game.duel_loser and id != game.duel_winner):
+			actor.duel_rest()
+			if dueling and id != 0:
+				actor.look_point = (_eye_of(game.duel_loser) + _eye_of(game.duel_winner)) * 0.5 + Vector3.DOWN * 0.15
+			continue
+		var other: int = game.duel_winner if id == game.duel_loser else game.duel_loser
+		if game.duel_stage == Match.DUEL_AFTER:
+			# Hands come down once the throw is settled; the loser's fist goes
+			# into the table instead.
+			if not storming:
+				actor.duel_rest()
+			elif id == 0:
+				_exit_t = 0.0
+				actor.storm_out([])
+			else:
+				_follow = id
+				actor.storm_out(_exit_path(id))
+			if id != 0:
+				actor.look_point = _eye_of(other)
+			continue
+		actor.duel_pose(game.duel_stage, game.duel_age, int(game.duel_throws.get(id, -1)), _eye_of(other))
+		if id != 0:
+			actor.look_point = _eye_of(other)
+
+
+func _eye_of(id: int) -> Vector3:
+	if id == 0 or not _actors.has(id):
+		return ($Camera3D as Camera3D).global_position
+	return _actors[id].head_point()
+
+
+func _exit_path(id: int) -> Array:
+	# A step out beside the chair, round the table clear of the other chairs
+	# on the near side, then past the seated player to the door behind them.
+	var at: Vector3 = (_actors[id] as Node3D).global_position
+	var side := -1.0 if at.x <= 0.05 else 1.0
+	var seat := atan2(at.x, at.z)
+	if side < 0.0 and seat > 0.0:
+		seat -= TAU
+	if side > 0.0 and seat < 0.0:
+		seat += TAU
+	var travel := -side
+	var goal := side * 1.0
+	var angle := seat + travel * 0.3
+	var path: Array = [_on_floor(angle, Vector2(at.x, at.z).length() + 0.25), _on_floor(angle, EXIT_RING)]
+	while (goal - angle) * travel > 0.3:
+		angle += travel * 0.3
+		path.append(_on_floor(angle, EXIT_RING))
+	path.append(_on_floor(goal, EXIT_RING))
+	path.append(Vector3(side * 1.8, 0.0, 2.3))
+	path.append(Vector3(side * 0.6, 0.0, 3.75))
+	path.append(DOOR)
+	return path
+
+
+func _on_floor(angle: float, radius: float) -> Vector3:
+	return Vector3(sin(angle) * radius, 0.0, cos(angle) * radius)
+
+
+func _on_thump() -> void:
+	_shake = 1.0
+	card_sound.emit("thump")
+	if _table != null:
+		_table.hop()
+
+
+func _on_departed(id: int) -> void:
+	card_sound.emit("door")
+	if _follow == id:
+		_follow = -1
+		_aim_yaw = 0.0
+		_aim_pitch = 0.0
 
 
 func pick_card(point: Vector2) -> int:
@@ -574,19 +818,44 @@ func fan_count(player_id: int) -> int:
 	return _table.fan_count(player_id)
 
 
+func resync(game: Match) -> void:
+	if _table != null:
+		_table.resync(game)
+
+
+func reveal_ready() -> bool:
+	return _table == null or _table.reveal_ready()
+
+
+func revealed() -> Array:
+	return [] if _table == null else _table.revealed()
+
+
+func hurry(on: bool) -> void:
+	if _table != null:
+		_table.hurry(on)
+
+
 func busy() -> bool:
-	return _table != null and _table.busy()
+	if _table != null and _table.busy():
+		return true
+	if _exit_t >= 0.0 and _exit_t < SeatActor.RISE_AT + EXIT_WALK:
+		return true
+	for actor in _actors.values():
+		if actor.leaving():
+			return true
+	return false
 
 
 func seat_caption(player_id: int) -> String:
-	return str(SEAT_NAME.get(player_id, ""))
+	return str(_seat_titles.get(player_id, ""))
 
 
 func seat_screen_pos(player_id: int) -> Vector2:
-	if not _actors.has(player_id) or player_id == 0:
+	if not _actors.has(player_id) or player_id == 0 or _actors[player_id].gone:
 		return Vector2(-1, -1)
 	var actor := _actors[player_id] as Node3D
-	var point: Vector3 = actor.head_point() + Vector3.UP * 0.34
+	var point: Vector3 = actor.head_point() + Vector3.UP * 0.25
 	var camera := $Camera3D as Camera3D
 	if camera.is_position_behind(point):
 		return Vector2(-1, -1)
