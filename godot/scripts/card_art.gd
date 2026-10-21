@@ -214,7 +214,7 @@ class Painter extends Control:
 		_sheet(rect, IVORY, EDGE, 14, 2)
 		# A fanned hand shows only a strip down each card's left edge, so the
 		# corner index is large and carries the count when it differs from
-		# the face (A, J, K).
+		# the face (A, J, Q, K).
 		_index(rect.position + Vector2(27, 36), label, wide, suit, ink, worth)
 		draw_set_transform(rect.end, PI, Vector2.ONE)
 		_index(Vector2(27, 36), label, wide, suit, ink, worth)
@@ -233,14 +233,12 @@ class Painter extends Control:
 			_text(at + Vector2(0, 82), worth, 24, BRASS.darkened(0.25))
 
 	func _worth(rank: int) -> String:
-		# Points this card counts for, where the face does not say so.
-		match rank:
-			0:
-				return "1"
-			10:
-				return "15"
-			12:
-				return "20"
+		# Points this card counts for, where the face does not say so: the
+		# ace 1, the jack, queen and king 10 each.
+		if rank == 0:
+			return "1"
+		if rank >= 10:
+			return "10"
 		return ""
 
 	func _back(rect: Rect2) -> void:
@@ -260,7 +258,7 @@ class Painter extends Control:
 		var mid := inner.get_center()
 		draw_circle(mid, 33.0, BACK.darkened(0.25))
 		draw_arc(mid, 33.0, 0.0, TAU, 64, BRASS, 3.0, true)
-		_text(mid, "30", 34, BRASS)
+		_text(mid, "25", 34, BRASS)
 
 	func _lozenge(c: Vector2, r: float, color: Color) -> void:
 		var pts := PackedVector2Array([c + Vector2(0, -r), c + Vector2(r * 0.75, 0), c + Vector2(0, r), c + Vector2(-r * 0.75, 0), c + Vector2(0, -r)])

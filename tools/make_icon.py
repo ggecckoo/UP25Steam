@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Draw the 30-80 app icon: an ivory playing card worth an impossible 30,
-in the game's lacquer red with the logo's gold-rimmed gem, tilted on the
-dark wood of the card room under its lamp.
+"""Draw the 25-40 app icon: an ivory playing card that reads like the title
+logo, an impossible 25 over the logo's gold-rimmed gem over 40, in the
+game's lacquer red, tilted on the dark wood of the card room under its lamp.
 
 Uses the game's own Playfair Display, its lining figures as the title logo
 sets them. Writes, for the Godot client:
@@ -75,16 +75,22 @@ def gem(d: ImageDraw.ImageDraw, cx: float, cy: float, w: float, h: float) -> Non
 
 
 def card(size: int, bold: Path) -> Image.Image:
-    # The card upright: big 30, the gem under it, the corner index, then
-    # turned a few degrees as if just dealt.
+    # The card upright: big 25, the gem under it with a gold rule either
+    # side, 40 under that, the corner index, then turned a few degrees as
+    # if just dealt.
     layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     w, h = size * 0.52, size * 0.73
     x0, y0 = (size - w) / 2, (size - h) / 2
     d.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=w * 0.09, fill=IVORY + (255,), outline=CARD_EDGE + (255,), width=max(2, size // 500))
-    d.text((x0 + w / 2, y0 + h * 0.4), "30", font=ImageFont.truetype(str(bold), int(w * 0.62)), fill=LACQUER + (255,), anchor="mm")
-    gem(d, x0 + w / 2, y0 + h * 0.73, w * 0.17, w * 0.24)
-    d.text((x0 + w * 0.15, y0 + h * 0.095), "30", font=ImageFont.truetype(str(bold), int(w * 0.15)), fill=LACQUER + (255,), anchor="mm")
+    d.text((x0 + w / 2, y0 + h * 0.31), "25", font=ImageFont.truetype(str(bold), int(w * 0.54)), fill=LACQUER + (255,), anchor="mm")
+    rule_y = y0 + h * 0.585
+    for side in (-1, 1):
+        a, b = x0 + w / 2 + side * w * 0.11, x0 + w / 2 + side * w * 0.33
+        d.line([(min(a, b), rule_y), (max(a, b), rule_y)], fill=(184, 140, 60, 255), width=max(2, size // 340))
+    gem(d, x0 + w / 2, rule_y, w * 0.12, w * 0.17)
+    d.text((x0 + w / 2, y0 + h * 0.775), "40", font=ImageFont.truetype(str(bold), int(w * 0.36)), fill=LACQUER + (255,), anchor="mm")
+    d.text((x0 + w * 0.15, y0 + h * 0.095), "25", font=ImageFont.truetype(str(bold), int(w * 0.15)), fill=LACQUER + (255,), anchor="mm")
     small = w * 0.034
     cx, cy = x0 + w * 0.15, y0 + h * 0.178
     d.polygon([(cx, cy - small), (cx + small * 0.72, cy), (cx, cy + small), (cx - small * 0.72, cy)], fill=LACQUER + (255,))

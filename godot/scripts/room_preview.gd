@@ -39,7 +39,7 @@ const CHAIR_PUSH := 0.32
 # The croupier stands at the rim in the gap between the far seat and the one
 # on the right, so the seated player sees every card it handles.
 const DEALER_ANGLE := 135.0
-const DEALER_RADIUS := 1.17
+const DEALER_RADIUS := 1.1
 
 var play_mode := false
 var _actors: Dictionary = {}
@@ -574,7 +574,7 @@ func _seat_cast(chairs: Array[Node3D]) -> void:
 
 
 func _place_dealer() -> void:
-	var packed: PackedScene = load("res://assets/characters/krupiye.glb")
+	var packed: PackedScene = load("res://assets/characters/tilki.glb")
 	if packed == null:
 		return
 	_dealer = packed.instantiate() as Node3D
@@ -585,8 +585,8 @@ func _place_dealer() -> void:
 	_dealer.rotation = Vector3(0.0, radians + PI, 0.0)
 	_dealer.call("setup", _table_info())
 	_dealer.connect("sound", func(kind: String): card_sound.emit(kind))
-	# Black feathers stand outside the lamp's cone: a soft warm fill from the
-	# table side and a cool rim from behind lift the crow off the wall.
+	# The croupier stands outside the lamp's cone: a soft warm fill from the
+	# table side and a faint cool rim from behind lift the fox off the wall.
 	var out := Vector3(sin(radians), 0.0, cos(radians))
 	var fill := OmniLight3D.new()
 	fill.light_color = Color(1.0, 0.78, 0.55)
@@ -733,6 +733,12 @@ func _stage_duel(game: Match, in_match: bool) -> void:
 				actor.look_point = (_eye_of(game.duel_loser) + _eye_of(game.duel_winner)) * 0.5 + Vector3.DOWN * 0.15
 			continue
 		var other: int = game.duel_winner if id == game.duel_loser else game.duel_loser
+		if game.duel_forfeit and game.duel_stage != Match.DUEL_AFTER:
+			# No throw to make: the two only look at each other.
+			actor.duel_rest()
+			if id != 0:
+				actor.look_point = _eye_of(other)
+			continue
 		if game.duel_stage == Match.DUEL_AFTER:
 			# Hands come down once the throw is settled; the loser's fist goes
 			# into the table instead.
@@ -829,6 +835,10 @@ func reveal_ready() -> bool:
 
 func revealed() -> Array:
 	return [] if _table == null else _table.revealed()
+
+
+func dealing() -> bool:
+	return _table != null and _table.dealing()
 
 
 func hurry(on: bool) -> void:

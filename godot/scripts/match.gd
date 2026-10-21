@@ -1,18 +1,31 @@
 class_name Match
 extends RefCounted
 
-const LIMIT := 30
-const CAP := 80
+const LIMIT := 25
+const CAP := 40
 const SEATS := 4
-# Limit and cap by how many players are still seated. With fewer cards a
-# round, 30 would leave the holder short nearly every time and 80 could never
-# be reached; these keep the four-seat mix of outcomes on a total the cards
-# can actually hit, and the cap stays "every card a King".
-const TARGETS := {4: Vector2i(LIMIT, CAP), 3: Vector2i(23, 60), 2: Vector2i(14, 40)}
+# Limit and cap by how many players are still seated: about what that many
+# cards add up to, and the cap "every card a ten". Two players have no cap
+# (0): two tens would come up a quarter of the rounds.
+const TARGETS := {4: Vector2i(LIMIT, CAP), 3: Vector2i(18, 30), 2: Vector2i(12, 0)}
+# A hand runs two rounds a seat, so everyone holds twice, and everyone is
+# dealt a card more than that, so no one plays their hand out: 8 rounds and
+# 9 cards at four, 6 and 7 at three, 4 and 5 at two. The rest of the deck
+# stays with the croupier, face down, and every card drawn comes off it.
 const ROUNDS := 8
-const HAND_SIZE := 7
-const DECK_SIZE := 28
+const HAND_SIZE := 9
+const DECK_SIZE := 52
 const PENALTY_PER_CARD := 4
+# Cards the holder draws on coming in under the limit.
+const UNDER_DRAW := 2
+# A bot weighs its cards over this many guesses at what it cannot see, and
+# guesses the holder's face-down card as the best of this many.
+const GUESSES := 40
+const HOLDER_GUESS := 5
+# Points apart within which two choices count as close, and what share of
+# the two cards a sunk holder draws counts for each of the others.
+const CLOSE := 3.0
+const SINK_SHARE := 0.7
 const THINK := {1: Vector2(1.9, 3.6), 2: Vector2(1.45, 2.7), 3: Vector2(1.25, 2.9)}
 const SUM_DELAY := 1.70
 const HOLD_DELAY := 2.90
@@ -29,6 +42,10 @@ const CHANT_BEAT := 0.5
 const SHOW_HOLD := 2.4
 const TIE_HOLD := 1.6
 const AFTER_HOLD := 1.4
+# How many times in a sitting a player may come last and throw for their
+# seat. The time after that, coming last costs the seat without a throw, so
+# a table of two can no longer trade lucky throws for ever.
+const DUEL_LIVES := 2
 
 const PHASE_MENU := 0
 const PHASE_PLAYING := 1
@@ -92,8 +109,12 @@ var duel_age := 0.0
 var duel_throws: Dictionary = {}
 var duel_out := false
 var duel_ties := 0
+# The last-placed player has no throws left: they leave without one.
+var duel_forfeit := false
 
-var _middle: Array = []
+# The croupier's deck (top card last) and the cards played out this hand.
+var _stock: Array = []
+var _discard: Array = []
 var _rng := RandomNumberGenerator.new()
 var _pace := RandomNumberGenerator.new()
 # Throws come from their own generator, drawn afresh for every throw, so a
@@ -121,23 +142,7 @@ class Card extends RefCounted:
 	var suit: int
 
 	func value() -> int:
-		match rank:
-			0:
-				return 1
-			2:
-				return 3
-			4:
-				return 5
-			6:
-				return 7
-			8:
-				return 9
-			10:
-				return 15
-			12:
-				return 20
-			_:
-				return rank + 1
+		return Match.rank_value(rank)
 
 	func red() -> bool:
 		return suit == 1 or suit == 2
@@ -146,20 +151,13 @@ class Card extends RefCounted:
 		match rank:
 			0:
 				return "A"
-			2:
-				return "3"
-			4:
-				return "5"
-			6:
-				return "7"
-			8:
-				return "9"
 			10:
 				return "J"
+			11:
+				return "Q"
 			12:
 				return "K"
-			_:
-				return str(rank)
+		return str(rank + 1)
 
 	func symbol() -> String:
 		return ["♠", "♥", "♦", "♣"][suit]
@@ -172,6 +170,11 @@ class Player extends RefCounted:
 	var hand: Array = []
 	var out := false
 	var left_after := 0
+	# Throws this player has had to make for their seat this sitting.
+	var duels := 0
+
+	func throws_left() -> int:
+		return maxi(0, Match.DUEL_LIVES - duels)
 
 	func penalty() -> int:
 		return hand.size() * Match.PENALTY_PER_CARD
@@ -185,6 +188,19 @@ class Played extends RefCounted:
 	var by: int
 
 
+static func rank_value(rank: int) -> int:
+	# Ace 1, two to nine their own number, ten and the faces 10.
+	return mini(rank + 1, 10)
+
+
+static func rounds_for(seats: int) -> int:
+	return 2 * clampi(seats, 2, SEATS)
+
+
+static func hand_for(seats: int) -> int:
+	return rounds_for(seats) + 1
+
+
 static func hand_value(hand: Array) -> int:
 	var total := 0
 	for card in hand:
@@ -193,7 +209,7 @@ static func hand_value(hand: Array) -> int:
 
 
 static func outcome_for(total: int, limit := LIMIT, cap := CAP) -> int:
-	if total == cap:
+	if cap > 0 and total == cap:
 		return OUTCOME_CAP
 	if total > limit:
 		return OUTCOME_OVER
@@ -217,7 +233,7 @@ static func draws(result: int, holder_id: int, seats: Array = [0, 1, 2, 3]) -> A
 			if i != holder_id:
 				plan[i] = 1
 	elif result == OUTCOME_UNDER:
-		plan[holder_id] = 1
+		plan[holder_id] = UNDER_DRAW
 	return plan
 
 
@@ -225,23 +241,60 @@ static func beats(a: int, b: int) -> bool:
 	return (a - b + 3) % 3 == 1
 
 
-static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, running: int, after: int, round_n: int, limit := LIMIT) -> Card:
-	var low: Card = hand[0]
+static func pick(rng: RandomNumberGenerator, hand: Array, is_holder: bool, unseen: Array, down: int, holder_down: bool, after: int, limit := LIMIT, cap := CAP) -> Card:
+	# A bot knows what a player at the table knows: its own hand, how many
+	# cards lie face down this round and whether the holder's is one of them,
+	# and every card turned up in an earlier round. `unseen` is the values of
+	# all the other cards. The holder plays high. The others weigh each card
+	# they could play over GUESSES guesses at the face-down cards and the ones
+	# still to come: a card shed is worth its points, sinking the holder a
+	# share of the two cards they would draw, and a total of exactly the limit
+	# or the cap costs a card of one's own. When the two best are close, one
+	# time in five a bot plays the second, as a person would.
 	var high: Card = hand[0]
+	var by_value := {}
 	for card in hand:
-		if card.value() < low.value():
-			low = card
-		if card.value() >= high.value():
+		if card.value() > high.value():
 			high = card
-	if is_holder:
+		if not by_value.has(card.value()):
+			by_value[card.value()] = card
+	if is_holder or unseen.is_empty() or by_value.size() == 1:
 		return high
-	if running + low.value() + after > limit:
-		return high
-	if running + high.value() + after * 20 <= limit:
-		return high
-	if rng.randf() < 0.18 + float(round_n) * 0.06:
-		return high
-	return low
+	var values: Array = by_value.keys()
+	var odds := {}
+	for value in values:
+		odds[value] = 0.0
+	var pool: Array = unseen.duplicate()
+	var cost := 6.5 + float(PENALTY_PER_CARD)
+	var need := mini(down + after, pool.size())
+	for guess in GUESSES:
+		for k in need:
+			var j := rng.randi_range(k, pool.size() - 1)
+			var swap = pool[k]
+			pool[k] = pool[j]
+			pool[j] = swap
+		var total := 0
+		for k in need:
+			if holder_down and k == 0:
+				var best := 0
+				for _t in HOLDER_GUESS:
+					best = maxi(best, int(pool[rng.randi_range(0, pool.size() - 1)]))
+				total += best
+			else:
+				total += int(pool[k])
+		for value in values:
+			var result := outcome_for(total + int(value), limit, cap)
+			if result == OUTCOME_UNDER:
+				odds[value] = float(odds[value]) + cost * float(UNDER_DRAW) * SINK_SHARE
+			elif result == OUTCOME_EXACT or result == OUTCOME_CAP:
+				odds[value] = float(odds[value]) - cost
+	var worth := {}
+	for value in values:
+		worth[value] = float(value) + float(odds[value]) / float(GUESSES)
+	values.sort_custom(func(a, b) -> bool: return float(worth[a]) > float(worth[b]))
+	if values.size() > 1 and float(worth[values[0]]) - float(worth[values[1]]) < CLOSE and rng.randf() < 0.2:
+		return by_value[values[1]]
+	return by_value[values[0]]
 
 
 func _init() -> void:
@@ -286,7 +339,7 @@ func resume() -> void:
 	_recorded = false
 	match _pending:
 		"duel":
-			_open_duel(duel_loser, duel_winner)
+			_open_duel(duel_loser, duel_winner, duel_forfeit)
 		"next":
 			_next_hand()
 		_:
@@ -299,7 +352,8 @@ func return_to_menu() -> void:
 	_can_resume = false
 	players = []
 	table = []
-	_middle = []
+	_stock = []
+	_discard = []
 	standings = []
 	exits = []
 	champion = -1
@@ -479,19 +533,47 @@ func hint_text() -> String:
 
 
 func _scaled(line: String) -> String:
-	# The catalog spells out the four-seat 30 and 80 in every language; a
-	# smaller table plays to its own pair.
+	# The catalog spells out the four-seat 25 and 40 in every language; a
+	# smaller table plays to its own pair (two players have no cap).
 	var goal := target_for(seated().size())
 	if goal == TARGETS[SEATS]:
 		return line
-	line = line.replace(str(CAP), str(goal.y)).replace(str(LIMIT), str(goal.x))
+	if goal.y > 0:
+		line = line.replace(str(CAP), str(goal.y))
+	line = line.replace(str(LIMIT), str(goal.x))
 	if text != null and text.lang == "tr":
-		# Turkish case endings follow the last vowel of the spoken number.
 		for number in [goal.x, goal.y]:
-			var vowel := _tr_vowel(number)
-			for old in ["ı", "i", "u", "ü"]:
-				line = line.replace("%d'%s" % [number, old], "%d'%s" % [number, vowel])
+			if number > 0:
+				line = _tr_cases(line, number)
 	return line
+
+
+static func _tr_cases(line: String, number: int) -> String:
+	# Turkish endings after a number follow its spoken last vowel, and take
+	# a buffer letter when the spoken number ends in a vowel: 18'i, 18'in,
+	# but 12'yi, 12'nin.
+	var vowel := _tr_vowel(number)
+	var open := _tr_open(number)
+	var cases := RegEx.new()
+	cases.compile("%d'[yn]?[ıiuü](n?)" % number)
+	var out := ""
+	var from := 0
+	for found in cases.search_all(line):
+		var genitive := found.get_string(1) == "n"
+		var ending := vowel + ("n" if genitive else "")
+		if open:
+			ending = ("n" if genitive else "y") + ending
+		out += line.substr(from, found.get_start() - from) + "%d'%s" % [number, ending]
+		from = found.get_end()
+	return out + line.substr(from)
+
+
+static func _tr_open(number: int) -> bool:
+	# Whether the number, spoken in Turkish, ends in a vowel (iki, altı,
+	# yedi; yirmi, elli).
+	if number % 10 != 0:
+		return number % 10 in [2, 6, 7]
+	return (number / 10) % 10 in [2, 5]
 
 
 static func _tr_vowel(number: int) -> String:
@@ -507,7 +589,7 @@ func human_dueling() -> bool:
 
 
 func choosing() -> bool:
-	return human_dueling() and not paused and (duel_stage == DUEL_INTRO or duel_stage == DUEL_CHOOSE)
+	return human_dueling() and not duel_forfeit and not paused and (duel_stage == DUEL_INTRO or duel_stage == DUEL_CHOOSE)
 
 
 func duel_beat() -> int:
@@ -530,6 +612,8 @@ func duel_heading() -> String:
 	var winner: String = players[duel_winner].player_name
 	match duel_stage:
 		DUEL_INTRO, DUEL_CHOOSE:
+			if duel_forfeit:
+				return text.t("duel.youSpent") if duel_loser == 0 else text.format_key("duel.spent %@", [loser])
 			if duel_ties > 0:
 				return text.t("duel.again")
 			return text.format_key("duel.handOver %@ %@", [winner, loser])
@@ -556,6 +640,12 @@ func duel_detail() -> String:
 	var winner: String = players[duel_winner].player_name
 	match duel_stage:
 		DUEL_INTRO, DUEL_CHOOSE:
+			if duel_forfeit:
+				return text.format_key("duel.spentDetail %lld", [DUEL_LIVES])
+			if players[duel_loser].throws_left() == 0:
+				# This throw is the last one the seat can be saved by.
+				var line := text.format_key("duel.youLast %@", [winner]) if duel_loser == 0 else (text.format_key("duel.youFirst %@", [loser]) if duel_winner == 0 else text.format_key("duel.stakes %@ %@", [loser, winner]))
+				return line + " " + (text.t("duel.youFinal") if duel_loser == 0 else text.format_key("duel.final %@", [loser]))
 			if duel_loser == 0:
 				return text.format_key("duel.youLast %@", [winner])
 			if duel_winner == 0:
@@ -570,12 +660,26 @@ func duel_detail() -> String:
 	return ""
 
 
+func rounds() -> int:
+	return rounds_for(seated().size())
+
+
+func stock() -> Array:
+	# The croupier's deck, bottom card first.
+	return _stock
+
+
+func discard() -> Array:
+	return _discard
+
+
 func middle() -> Array:
-	return _middle
+	# Every card off the players' hands and the table.
+	return _stock + _discard
 
 
 func count_cards() -> int:
-	var total := _middle.size() + table.size()
+	var total := _stock.size() + _discard.size() + table.size()
 	for player in players:
 		total += player.hand.size()
 	return total
@@ -645,8 +749,26 @@ func _play_ai(seat: int) -> void:
 		_finish_hand()
 		return
 	var after := order().size() - 1 - table.size()
-	var card := pick(_rng, hand, seat == holder, table_sum(), after, round_no, limit())
+	var holder_down := not table.is_empty() and int(table[0].by) == holder
+	var card := pick(_rng, hand, seat == holder, _unseen_by(seat), table.size(), holder_down, after, limit(), cap())
 	_place(seat, card)
+
+
+func _unseen_by(seat: int) -> Array:
+	# Values of the cards `seat` cannot see: every card but its own hand and
+	# the ones turned up in earlier rounds of this hand.
+	var left := {}
+	for rank in 13:
+		left[rank_value(rank)] = int(left.get(rank_value(rank), 0)) + 4
+	for card in players[seat].hand:
+		left[card.value()] = int(left[card.value()]) - 1
+	for card in _discard:
+		left[card.value()] = int(left[card.value()]) - 1
+	var out: Array = []
+	for value in left:
+		for _i in maxi(int(left[value]), 0):
+			out.append(value)
+	return out
 
 
 func _place(seat: int, card: Card) -> void:
@@ -708,7 +830,7 @@ func _set_verdict() -> void:
 
 func _finish_reveal() -> void:
 	_apply_round()
-	if round_no >= ROUNDS:
+	if round_no >= rounds():
 		_finish_hand()
 		return
 	round_no += 1
@@ -722,22 +844,25 @@ func _apply_round() -> void:
 	if not has_outcome:
 		outcome = outcome_for(table_sum(), limit(), cap())
 		has_outcome = true
-	var pile: Array = []
+	# The round's cards are played out; whoever draws gets the croupier's
+	# top cards, face down. If the deck has too few, the played-out cards
+	# are shuffled back in with what is left of it first.
 	for played in table:
-		pile.append(played.card)
-	_shuffle(pile)
-	pile.append_array(_middle)
+		_discard.append(played.card)
 	var plan := draws(outcome, holder, seated())
+	var wanted := 0
+	for count in plan:
+		wanted += int(count)
+	if wanted > _stock.size():
+		_stock.append_array(_discard)
+		_discard = []
+		_shuffle(_stock)
 	for seat in order():
-		var count: int = plan[seat]
-		if count <= 0 or pile.is_empty():
-			continue
-		count = mini(count, pile.size())
-		players[seat].hand.append_array(pile.slice(0, count))
-		pile = pile.slice(count)
-		if seat == 0:
+		var count: int = mini(int(plan[seat]), _stock.size())
+		for _k in count:
+			players[seat].hand.append(_stock.pop_back())
+		if count > 0 and seat == 0:
 			_sort_hand(players[seat].hand)
-	_middle = pile
 	holder = _next_seat(holder)
 	table = []
 	has_outcome = false
@@ -755,12 +880,14 @@ func _next_seat(seat: int) -> int:
 func _deal() -> void:
 	var deck := _new_deck()
 	var seats := seated()
+	var size := hand_for(seats.size())
 	for player in players:
 		player.hand = []
 	for k in seats.size():
-		players[seats[k]].hand = deck.slice(k * HAND_SIZE, k * HAND_SIZE + HAND_SIZE)
+		players[seats[k]].hand = deck.slice(k * size, k * size + size)
 	_sort_hand(players[0].hand)
-	_middle = deck.slice(seats.size() * HAND_SIZE)
+	_stock = deck.slice(seats.size() * size)
+	_discard = []
 	holder = seats[_rng.randi_range(0, seats.size() - 1)]
 	round_no = 1
 	standings = []
@@ -771,7 +898,7 @@ func _finish_hand() -> void:
 	if phase == PHASE_DUEL or phase == PHASE_OVER:
 		return
 	for played in table:
-		_middle.append(played.card)
+		_discard.append(played.card)
 	table = []
 	paused = false
 	has_outcome = false
@@ -780,14 +907,21 @@ func _finish_hand() -> void:
 	if standings.size() < 2:
 		_close_session()
 		return
-	_open_duel(int(standings[standings.size() - 1].id), int(standings[0].id))
+	# Coming last uses one of the player's throws; with none left the seat
+	# is lost without one.
+	var loser := int(standings[standings.size() - 1].id)
+	var forfeit: bool = players[loser].duels >= DUEL_LIVES
+	if not forfeit:
+		players[loser].duels += 1
+	_open_duel(loser, int(standings[0].id), forfeit)
 	_save()
 
 
-func _open_duel(loser: int, winner: int) -> void:
+func _open_duel(loser: int, winner: int, forfeit := false) -> void:
 	phase = PHASE_DUEL
 	duel_loser = loser
 	duel_winner = winner
+	duel_forfeit = forfeit
 	duel_throws = {}
 	duel_out = false
 	duel_ties = 0
@@ -809,6 +943,7 @@ func _clear_duel() -> void:
 	duel_throws = {}
 	duel_out = false
 	duel_ties = 0
+	duel_forfeit = false
 	_pick = -1
 	_settled = false
 	_pending = ""
@@ -829,7 +964,10 @@ func _tick_duel(dt: float) -> void:
 		return
 	match duel_stage:
 		DUEL_INTRO:
-			_duel_ready()
+			if duel_forfeit:
+				_forfeit()
+			else:
+				_duel_ready()
 		DUEL_CHANT:
 			_throw()
 		DUEL_SHOW:
@@ -853,11 +991,19 @@ func choose_throw(choice: int) -> bool:
 func skip_duel() -> void:
 	if phase != PHASE_DUEL or paused:
 		return
-	if duel_stage == DUEL_INTRO:
+	if duel_stage == DUEL_INTRO and duel_forfeit:
+		_forfeit()
+	elif duel_stage == DUEL_INTRO:
 		_duel_ready()
 	elif duel_stage == DUEL_SHOW or (duel_stage == DUEL_AFTER and not duel_out):
 		_timer = 0.0
 		_tick_duel(0.001)
+
+
+func _forfeit() -> void:
+	# No throw: the seat goes, and on to the walk out.
+	_settle(true)
+	_duel_stage(DUEL_AFTER, AFTER_HOLD)
 
 
 func _duel_ready() -> void:
@@ -891,7 +1037,7 @@ func _settle(loser_out: bool) -> void:
 		var gone: Player = players[duel_loser]
 		gone.out = true
 		gone.left_after = hand_no
-		_middle.append_array(gone.hand)
+		_discard.append_array(gone.hand)
 		gone.hand = []
 		exits.append(duel_loser)
 	if _decided():
@@ -995,7 +1141,7 @@ func _worse(a: Dictionary, b: Dictionary) -> bool:
 
 func _new_deck() -> Array:
 	var deck: Array = []
-	for rank in [0, 2, 4, 6, 8, 10, 12]:
+	for rank in 13:
 		for suit in 4:
 			deck.append(_mint(rank, suit))
 	_shuffle(deck)
@@ -1049,7 +1195,7 @@ func _save() -> void:
 	if save_path == "":
 		return
 	var file := {
-		"version": 2,
+		"version": 3,
 		"gamesFinished": games_finished,
 		"gamesWon": games_won,
 		"language": text.lang if text != null else "",
@@ -1086,7 +1232,8 @@ func load_save() -> void:
 			text.set_language(text.detect(OS.get_locale()))
 	if not _restore(parsed.get("resume", null)):
 		players = []
-		_middle = []
+		_stock = []
+		_discard = []
 		table = []
 		_can_resume = false
 		phase = PHASE_MENU
@@ -1112,14 +1259,16 @@ func _resume_snapshot() -> Dictionary:
 		"holder": holder,
 		"names": [players[0].player_name, players[1].player_name, players[2].player_name, players[3].player_name],
 		"hands": _encode_cards(hands),
-		"middle": _encode_list(_middle if table.is_empty() or _applied else _middle),
+		"stock": _encode_list(_stock),
+		"discard": _encode_list(_discard),
 		"hand": hand_no,
 		"out": out,
 		"exits": exits.duplicate(),
 		"pending": _pending,
+		"duels": [players[0].duels, players[1].duels, players[2].duels, players[3].duels],
 	}
 	if _pending == "duel":
-		snap["duel"] = [duel_loser, duel_winner]
+		snap["duel"] = [duel_loser, duel_winner, duel_forfeit]
 	return snap
 
 
@@ -1154,10 +1303,12 @@ func _restore(file) -> bool:
 			return false
 		restored.append(hand)
 		total += hand.size()
-	var middle: Array = _decode_list(file.get("middle", []), seen)
-	if middle == null:
+	var stock_cards = _decode_list(file.get("stock", []), seen)
+	var played_out = _decode_list(file.get("discard", []), seen)
+	if stock_cards == null or played_out == null:
 		return false
-	total += middle.size()
+	total += (stock_cards as Array).size() + (played_out as Array).size()
+	# A save from another deck (the 28-card 30-80 one) does not resume.
 	if total != DECK_SIZE:
 		return false
 	# Saves from before seats could empty have none of these.
@@ -1175,13 +1326,18 @@ func _restore(file) -> bool:
 	if left > SEATS - 2:
 		return false
 	if pending == "duel":
-		if not duel is Array or duel.size() != 2:
+		if not duel is Array or duel.size() < 2 or duel.size() > 3:
 			return false
 		for seat in duel:
 			if int(seat) < 0 or int(seat) >= SEATS or int(out[int(seat)]) > 0:
 				return false
 		if int(duel[0]) == int(duel[1]):
 			return false
+	# Saves from before the throws were counted have none: every seat starts
+	# with all its throws.
+	var used = file.get("duels", [0, 0, 0, 0])
+	if not used is Array or used.size() != SEATS:
+		used = [0, 0, 0, 0]
 	var names = file.get("names", [])
 	var defaults := [text.t("common.player"), "Sis", "Kaya", "Karaca"]
 	players = []
@@ -1197,9 +1353,11 @@ func _restore(file) -> bool:
 		player.hand = restored[i]
 		player.out = int(out[i]) > 0
 		player.left_after = int(out[i])
+		player.duels = clampi(int(used[i]), 0, DUEL_LIVES)
 		players.append(player)
 	_sort_hand(players[0].hand)
-	_middle = middle
+	_stock = stock_cards
+	_discard = played_out
 	holder = holder_n
 	round_no = round_n
 	hand_no = maxi(1, int(file.get("hand", 1)))
@@ -1219,6 +1377,7 @@ func _restore(file) -> bool:
 	if pending == "duel":
 		duel_loser = int(duel[0])
 		duel_winner = int(duel[1])
+		duel_forfeit = duel.size() > 2 and bool(duel[2])
 	table = []
 	phase = PHASE_MENU
 	_can_resume = true

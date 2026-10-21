@@ -29,6 +29,11 @@ const FAN_TURN := 0.49
 const CARD_HALF_SIZE := Vector2(0.048, 0.067)
 const PAD_AT := Vector2(0.014, 0.015)
 const THUMB_SKIN := 0.0085
+# A seated opponent's fan (hold()) is turned this far toward the thumb about
+# the thumb pad, so with the fan upright the fingers run up across its back
+# on a slant and the wrist sits low and to the side, instead of a hand stood
+# straight up under the cards.
+const HOLD_LEAN := 0.42
 # A seated opponent's hands: wrist showing between the coat sleeve and the
 # hand (hand-model metres), how much shorter their fur is than the player's
 # own, so they read as the same coat as the textured body rather than plush
@@ -148,6 +153,11 @@ const LOOKS := {
 		"mark": Color(0.09, 0.07, 0.05), "pattern": 2, "pad": Color(0.12, 0.1, 0.09),
 		"claw": Color(0.16, 0.12, 0.1), "length": 0.0058, "claw_length": 0.017, "comb": 1.0,
 	},
+	"tilki": {
+		"root": Color(0.36, 0.13, 0.04), "tip": Color(0.86, 0.42, 0.14), "under": Color(0.9, 0.84, 0.76),
+		"mark": Color(0.12, 0.06, 0.03), "pattern": 0, "pad": Color(0.16, 0.1, 0.08),
+		"claw": Color(0.15, 0.1, 0.07), "length": 0.005, "claw_length": 0.014, "comb": 1.1,
+	},
 	"dere": {
 		"root": Color(0.13, 0.085, 0.05), "tip": Color(0.36, 0.25, 0.15), "under": Color(0.38, 0.29, 0.21),
 		"mark": Color(0.08, 0.05, 0.03), "pattern": 0, "pad": Color(0.12, 0.08, 0.07),
@@ -255,7 +265,7 @@ func shape(side: String, mix: Dictionary) -> void:
 			var table: Dictionary = SHAPES[key]
 			if key == "fan" and side == "Left" and not _fan_shape.is_empty():
 				table = _fan_shape
-			elif key == "pluck" and side == "Right" and not _pluck_shape.is_empty():
+			elif key == "pluck" and not _pluck_shape.is_empty():
 				table = _pluck_shape
 			var src: Array = table[digit]
 			for i in count:
@@ -269,9 +279,56 @@ func grip() -> Transform3D:
 	return _frames["grip"]
 
 
+func hold() -> Transform3D:
+	# The fan grip for a seated opponent: grip() turned HOLD_LEAN about the
+	# point where the thumb pad presses the front card, in the fan's plane,
+	# so the thumb and the fingers behind keep the same hold on it.
+	if not _frames.has("hold"):
+		var grip: Transform3D = _frames["grip"]
+		var n := grip.basis.z
+		var pad := grip.origin + (n * (0.0004 + CARD_HALF) + grip.basis.x * PAD_AT.x + grip.basis.y * PAD_AT.y) / size
+		var turn := Basis(n, HOLD_LEAN)
+		_frames["hold"] = Transform3D(turn * grip.basis, pad + turn * (grip.origin - pad))
+	return _frames["hold"]
+
+
 func ground_lift(side: String) -> float:
 	# Wrist height above a surface the relaxed hand lies on palm down.
 	return float(_frames["lift_" + side]) * size
+
+
+func pluck_in(side: String) -> Transform3D:
+	# The pluck grip in either hand: the left hand is the right one mirrored
+	# across its own x, so its grip is the right one's, mirrored.
+	var xf: Transform3D = _frames["pluck"]
+	if side == "Right":
+		return xf
+	var m := Basis(Vector3(-1.0, 0.0, 0.0), Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0))
+	return Transform3D(m * xf.basis * m, m * xf.origin)
+
+
+func fist_axis(side: String) -> Transform3D:
+	# In hand space, where a rod held in the closed hand runs: through the
+	# middle of the curled fingers, from the little finger toward the index,
+	# its basis z along that line and y back toward the wrist.
+	var key := "fist_" + side
+	if _frames.has(key):
+		return _frames[key]
+	var part: Dictionary = _parts[side]
+	var keep: Dictionary = part["angles"].duplicate(true)
+	_apply(side, SHAPES["rock"])
+	var index := (_bone_local(part, "Index2").origin + _bone_local(part, "Index3").origin) * 0.5
+	var pinky := (_bone_local(part, "Pinky2").origin + _bone_local(part, "Pinky3").origin) * 0.5
+	var knuckles := (_bone_local(part, "Middle1").origin + _bone_local(part, "Ring1").origin) * 0.5
+	var curl := (_bone_local(part, "Middle3").origin + _bone_local(part, "Ring3").origin) * 0.5
+	_apply(side, keep)
+	var along := (index - pinky).normalized()
+	var center := (index + pinky) * 0.5 * 0.45 + (knuckles + curl) * 0.5 * 0.55
+	var toward_wrist := Vector3(0.0, -1.0, 0.0)
+	var y := (toward_wrist - along * toward_wrist.dot(along)).normalized()
+	var frame := Transform3D(Basis(y.cross(along).normalized(), y, along), center)
+	_frames[key] = frame
+	return frame
 
 
 func pluck() -> Transform3D:

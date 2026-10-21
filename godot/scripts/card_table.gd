@@ -34,6 +34,8 @@ var _nodes: Dictionary = {}
 var _moves: Dictionary = {}
 var _entries: Array = []
 var _pile: Array = []
+# The croupier's deck on the tray, bottom card first.
+var _stock: Array = []
 var _jobs: Array = []
 var _dealing: Array = []
 var _deal_clock := 0.0
@@ -175,6 +177,7 @@ func _clear() -> void:
 	_moves.clear()
 	_entries.clear()
 	_pile.clear()
+	_stock.clear()
 	_jobs.clear()
 	_dealing.clear()
 	_glances.clear()
@@ -195,10 +198,11 @@ func _clear() -> void:
 func _rebuild(game: Match) -> void:
 	_clear()
 	var seats := game.seated()
+	var size := Match.hand_for(seats.size())
 	var fresh := game.phase == Match.PHASE_PLAYING and game.round_no == 1 and game.table.is_empty()
-	fresh = fresh and game.middle().size() == Match.DECK_SIZE - seats.size() * Match.HAND_SIZE
+	fresh = fresh and game.discard().is_empty() and game.stock().size() == Match.DECK_SIZE - seats.size() * size
 	for player in game.players:
-		if player.hand.size() != (0 if player.out else Match.HAND_SIZE):
+		if player.hand.size() != (0 if player.out else size):
 			fresh = false
 	if fresh:
 		_lay_deck(game)
@@ -216,7 +220,11 @@ func _rebuild(game: Match) -> void:
 		node.global_transform = entry["spot"]
 		entry["state"] = "landed"
 		_entries.append(entry)
-	for card in game.middle():
+	for card in game.stock():
+		var node := _make(card)
+		node.global_transform = _stock_slot(_stock.size())
+		_stock.append(node)
+	for card in game.discard():
 		var node := _make(card)
 		node.global_transform = _pile_slot(_pile.size())
 		_pile.append(node)
@@ -226,30 +234,41 @@ func _lay_deck(game: Match) -> void:
 	var order: Array = []
 	var seats := game.order()
 	seats.push_back(seats.pop_front())
-	for k in Match.HAND_SIZE:
+	for k in Match.hand_for(seats.size()):
 		for seat in seats:
 			order.append({"card": game.players[seat].hand[k], "seat": seat})
-	# With empty seats the undealt cards go to the pile at the table edge.
-	for card in game.middle():
-		var node := _make(card)
-		node.global_transform = _pile_slot(_pile.size())
-		_pile.append(node)
+	# The cards no one is dealt stay at the bottom of the deck: once the
+	# deal is done they are the croupier's deck to draw from.
+	var kept: Array = []
+	for card in game.stock():
+		kept.append(_make(card))
 	var deck := _deck_spot()
+	for i in kept.size():
+		var node: Node3D = kept[i]
+		var yaw := _rng.randf_range(-0.025, 0.025)
+		node.global_transform = Transform3D(_face_down(_toward_camera().rotated(Vector3.UP, yaw)), deck + Vector3.UP * (LIFT + STACK * float(i)))
 	for i in order.size():
 		var node := _make(order[i]["card"])
 		var yaw := _rng.randf_range(-0.025, 0.025)
-		var pos := deck + Vector3.UP * (LIFT + STACK * float(order.size() - 1 - i))
+		var pos := deck + Vector3.UP * (LIFT + STACK * float(kept.size() + order.size() - 1 - i))
 		node.global_transform = Transform3D(_face_down(_toward_camera().rotated(Vector3.UP, yaw)), pos)
 		_dealing.append({"node": node, "seat": order[i]["seat"]})
 	_deal_clock = -0.4
 	if _dealer == null:
+		_stock = kept
 		return
-	# The croupier deals them off the deck a card at a time, round the table,
-	# onto the felt before each player; with the last card down, everyone
-	# picks up their own pile.
+	# The croupier takes the deck up and deals it a card at a time, round the
+	# table, onto the felt before each player; with the last card down,
+	# everyone picks up their own pile.
 	var counts := {}
 	_deal_piles.clear()
 	_deal_left = _dealing.size()
+	var deck_nodes: Array = kept.duplicate()
+	for i in range(_dealing.size() - 1, -1, -1):
+		deck_nodes.append(_dealing[i]["node"])
+	for node in kept:
+		_incoming[node] = true
+	_dealer.take_deck(deck_nodes)
 	for item in _dealing:
 		var node: Node3D = item["node"]
 		var seat := int(item["seat"])
@@ -258,6 +277,14 @@ func _lay_deck(game: Match) -> void:
 		var spot := _deal_spot(seat, k)
 		_incoming[node] = true
 		_dealer.deal(node, spot.origin, _pitch.bind(node, seat, spot))
+	var spots: Array = []
+	for i in kept.size():
+		spots.append(_stock_slot(i))
+	_stock = kept
+	_dealer.put_deck(spots, func():
+		for node in kept:
+			_incoming.erase(node)
+	)
 	_dealing.clear()
 
 
@@ -273,15 +300,15 @@ func _deal_spot(seat: int, k: int) -> Transform3D:
 
 
 func _pitch(node: Node3D, seat: int, spot: Transform3D) -> void:
-	# Off the croupier's fingers low over the cloth, turning as it goes,
-	# and down onto the pile before its player.
+	# Off the croupier's fingers flat and low, skimming over the cloth and
+	# slowing as it settles onto the pile before its player.
 	if not is_instance_valid(node):
 		_incoming.erase(node)
 		_dealt(seat, null)
 		return
 	sound.emit("deal")
 	var way := _flat(spot.origin - node.global_position).length()
-	_move(node, spot, clampf(0.16 + way * 0.3, 0.2, 0.45), 0.045, _dealt.bind(seat, node), "out")
+	_move(node, spot, clampf(0.14 + way * 0.28, 0.18, 0.42), 0.012, _dealt.bind(seat, node), "out")
 
 
 func _dealt(seat: int, node: Node3D) -> void:
@@ -292,6 +319,8 @@ func _dealt(seat: int, node: Node3D) -> void:
 	_deal_left -= 1
 	if _deal_left > 0:
 		return
+	if _dealer != null:
+		_dealer.hurry = 1.0
 	# Everyone reaches for their own pile and lifts it into their hand.
 	for owner in _deal_piles:
 		var cards: Array = _deal_piles[owner]
@@ -729,20 +758,37 @@ func _sweep(game: Match) -> void:
 
 
 func _dealer_sweep(game: Match) -> void:
-	# The croupier clears the row a card at a time so no card ever slides
-	# over another: first the rest onto the pile, nearest it first, then
-	# each drawn card across to whoever draws it, who picks it up.
+	# The croupier clears the row onto the pile, a card at a time, nearest it
+	# first. Whoever draws then gets the croupier's top cards, face down: it
+	# takes its deck up, deals them and puts the rest back down. When the deck
+	# ran short, the pile is gathered back into it and washed first.
 	var piled: Array = []
-	var drawn: Array = []
 	for entry in _entries:
 		var node: Node3D = entry["node"]
-		if not is_instance_valid(node):
-			continue
-		var owner := _owner_of(game, int(entry["id"]))
+		if is_instance_valid(node):
+			piled.append(node)
+	_entries.clear()
+	_lined = false
+	var want := _nodes_of(game.stock())
+	var drawn: Array = []
+	var refill := false
+	for node in want:
+		if not _stock.has(node):
+			refill = true
+	# Off the top of the deck, in the order they come off it.
+	for i in range(_stock.size() - 1, -1, -1):
+		var node: Node3D = _stock[i]
+		var owner := _owner_of(game, int(node.get_meta("card_id", -1)))
 		if owner >= 0:
 			drawn.append({"node": node, "owner": owner})
-		else:
-			piled.append(node)
+	for node in _pile + piled:
+		var owner := _owner_of(game, int(node.get_meta("card_id", -1)))
+		if owner >= 0:
+			refill = true
+			drawn.append({"node": node, "owner": owner})
+	if refill:
+		_refill_draw(piled, want, drawn)
+		return
 	var pile := _pile_center()
 	piled.sort_custom(func(a: Node3D, b: Node3D) -> bool:
 		return _flat(a.global_position - pile).length() < _flat(b.global_position - pile).length()
@@ -757,17 +803,110 @@ func _dealer_sweep(game: Match) -> void:
 			_pile.append(node)
 			_incoming.erase(node)
 		, 0.012 + 1.2 * maxf(rise, 0.0))
+	if drawn.is_empty():
+		return
+	# The deck as it lies, bottom card first; the drawn cards are its top.
+	_deal_off(_stock.duplicate(), want, drawn)
+
+
+func _refill_draw(piled: Array, want: Array, drawn: Array) -> void:
+	# The deck ran short: the round's cards are raked together at the deck's
+	# place and turned face down, the pile and what was left of the deck are
+	# pushed over onto them, and the lot is washed round on the felt; then
+	# the croupier deals off the top as usual.
+	var at := _deck_spot()
+	var top := _toward_camera()
+	var up_spots: Array = []
+	var down_spots: Array = []
+	for i in piled.size():
+		up_spots.append(Transform3D(_face_up(top), at + Vector3.UP * (LIFT + STACK * float(i))))
+		down_spots.append(Transform3D(_face_down(top), at + Vector3.UP * (LIFT + STACK * float(piled.size() - 1 - i))))
+	var lying: Array = _pile + _stock
+	var all: Array = piled + lying
+	for node in all:
+		_incoming[node] = true
+	if not piled.is_empty():
+		_dealer.gather(piled, up_spots)
+		_dealer.turn(piled, down_spots)
+	if not lying.is_empty():
+		var spots: Array = []
+		for i in lying.size():
+			spots.append(Transform3D(_face_down(top), at + Vector3.UP * (LIFT + STACK * float(piled.size() + i))))
+		_dealer.push(lying, [at], spots)
+	_pile.clear()
+	_stock.clear()
+	# Washed: the drawn cards end on top in the order they are dealt, the
+	# rest under them in the order the deck now has.
+	var order: Array = want.duplicate()
+	for k in range(drawn.size() - 1, -1, -1):
+		order.append(drawn[k]["node"])
+	var washed: Array = []
+	for i in order.size():
+		var yaw := _rng.randf_range(-0.04, 0.04)
+		washed.append(Transform3D(_face_down(top.rotated(Vector3.UP, yaw)), at + Vector3.UP * (LIFT + STACK * float(i))))
+	_dealer.wash(order, washed)
+	_deal_off(order, want, drawn)
+
+
+func _deal_off(deck: Array, want: Array, drawn: Array) -> void:
+	# The croupier takes `deck` (bottom card first) up from the tray, deals
+	# each drawn card off its top face down to its drawer, and puts the rest
+	# (`want`) back down where the deck lies.
+	for node in deck:
+		_incoming[node] = true
+	_dealer.take_deck(deck)
 	for item in drawn:
 		var node: Node3D = item["node"]
 		var owner: int = item["owner"]
+		var dir: Vector3 = _dirs[owner]
+		var side := Vector3.UP.cross(dir)
+		var pos := dir * HANDED + side * _rng.randf_range(-0.04, 0.04)
+		pos.y = _felt + LIFT
+		var to := Transform3D(_face_down((-dir).rotated(Vector3.UP, _rng.randf_range(-0.15, 0.15))), pos)
+		_dealer.deal(node, to.origin, _hand_drawn.bind(node, owner, to))
+	var spots: Array = []
+	for i in want.size():
+		spots.append(_stock_slot(i))
+	_stock = want.duplicate()
+	_dealer.put_deck(spots, func():
+		for node in want:
+			_incoming.erase(node)
+	)
+
+
+func _nodes_of(cards: Array) -> Array:
+	var out: Array = []
+	for card in cards:
+		var node: Node3D = _nodes.get(int(card.id))
+		if node != null:
+			out.append(node)
+	return out
+
+
+func _stock_slot(i: int) -> Transform3D:
+	# The i-th card up the croupier's deck on the tray, face down.
+	var yaw := _rng.randf_range(-0.02, 0.02)
+	var pos := _deck_spot() + Vector3.UP * (LIFT + STACK * float(i))
+	return Transform3D(_face_down(_toward_camera().rotated(Vector3.UP, yaw)), pos)
+
+
+func _hand_drawn(node: Node3D, owner: int, to: Transform3D) -> void:
+	# Off the croupier's fingers low over the cloth onto the felt before its
+	# drawer, face down; they pick it up into their hand.
+	if not is_instance_valid(node):
+		_incoming.erase(node)
+		return
+	sound.emit("deal")
+	var way := _flat(to.origin - node.global_position).length()
+	_move(node, to, clampf(0.14 + way * 0.28, 0.18, 0.42), 0.012, func():
 		var actor: Node3D = _actors[owner]
-		var to := _handed_spot(owner, node)
-		_incoming[node] = true
-		_dealer.slide(node, _route(node, to.origin), to, func():
-			actor.take_card(node, -1 if owner == 0 else -2, func(_card): _incoming.erase(node))
-		)
-	_entries.clear()
-	_lined = false
+		actor.take_card(node, -1 if owner == 0 else -2, func(_card): _incoming.erase(node))
+	, "out")
+
+
+func dealing() -> bool:
+	# The croupier is dealing a new hand.
+	return _deal_left > 0
 
 
 func _route(node: Node3D, goal: Vector3) -> Array:
@@ -881,15 +1020,23 @@ func _reconcile(game: Match) -> void:
 				actor.remove_from_fan(node)
 		if player.id == 0:
 			actor.order_fan(want)
-	var middle: Array = []
-	for card in game.middle():
-		var node: Node3D = _nodes.get(int(card.id))
-		if node != null:
-			middle.append(node)
-	for node in _pile.duplicate():
-		if not middle.has(node):
+	# The croupier's deck and the pile, as the match has them.
+	var deck := _nodes_of(game.stock())
+	if deck != _stock:
+		for i in deck.size():
+			var node: Node3D = deck[i]
+			if i < _stock.size() and _stock[i] == node:
+				continue
+			for actor in _actors.values():
+				actor.remove_from_fan(node)
 			_pile.erase(node)
-	for node in middle:
+			_move(node, _stock_slot(i), 0.4, 0.03, Callable())
+		_stock = deck
+	var played := _nodes_of(game.discard())
+	for node in _pile.duplicate():
+		if not played.has(node):
+			_pile.erase(node)
+	for node in played:
 		if not _pile.has(node) and not kept.has(node):
 			for actor in _actors.values():
 				actor.remove_from_fan(node)

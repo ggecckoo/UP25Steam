@@ -124,7 +124,7 @@ func _events(delta: float) -> void:
 	if not _last.is_empty():
 		var new_round: bool = now["round"] != _last["round"] or now["hand"] != _last["hand"]
 		if new_round and g.phase == Match.PHASE_PLAYING:
-			if g.round_no == Match.ROUNDS:
+			if g.round_no == g.rounds():
 				_flash(_t("hud.lastRound"), _t("hud.lastRoundSub"), RED)
 			elif g.holder == 0:
 				_flash(_t("hud.youHold"), _scaled_hint(true), GOLD_HI)
@@ -179,23 +179,28 @@ func _progress(size: Vector2) -> void:
 	# One pip a round: played ones filled, this one ringed, the rest faint.
 	var pips := Pips.new()
 	pips.round_no = g.round_no
-	pips.total = Match.ROUNDS
-	pips.position = Vector2(right - 8.0 * 22.0, 44.0)
-	pips.size = Vector2(8.0 * 22.0, 22.0)
+	pips.total = g.rounds()
+	pips.position = Vector2(right - float(pips.total) * 22.0, 44.0)
+	pips.size = Vector2(float(pips.total) * 22.0, 22.0)
 	_static.add_child(pips)
-	var round_text := text.format_key("game.round %lld %lld", [g.round_no, Match.ROUNDS])
+	var round_text := text.format_key("game.round %lld %lld", [g.round_no, g.rounds()])
 	var line := _text(_static, round_text, _label, 13, IVORY_DIM, HORIZONTAL_ALIGNMENT_RIGHT)
 	line.position = Vector2(right - 300.0, 70.0)
 	line.size = Vector2(300, 18)
 	var y := 94.0
-	if g.round_no == Match.ROUNDS and g.phase != Match.PHASE_DUEL:
+	if g.round_no == g.rounds() and g.phase != Match.PHASE_DUEL:
 		var last := _chip(_static, TitleScreen.upper(_t("hud.lastRound"), text.lang), RED, IVORY)
 		last.position = Vector2(right - last.size.x, y)
 		y += 30.0
+	# Two players have no cap, so theirs shows the target alone.
 	var goal := text.format_key("hud.target %lld %lld", [g.limit(), g.cap()])
+	if g.cap() <= 0:
+		goal = text.format_key("hud.targetOnly %lld", [g.limit()])
 	var seats := g.seated().size()
 	if seats < Match.SEATS:
 		goal = text.format_key("game.table %lld %lld %lld", [seats, g.limit(), g.cap()])
+		if g.cap() <= 0:
+			goal = text.format_key("game.tableOnly %lld %lld", [seats, g.limit()])
 	var chip := _chip(_static, goal, Color(0.0, 0.0, 0.0, 0.5), GOLD_HI)
 	chip.position = Vector2(right - chip.size.x, y)
 
@@ -233,7 +238,7 @@ func _own_plate(size: Vector2) -> void:
 	var me: Match.Player = g.players[0]
 	if me.out:
 		return
-	var box := _panel(_static, Rect2(22, size.y - 88, 250, 66), 0.66)
+	var box := _panel(_static, Rect2(22, size.y - 106, 250, 84), 0.66)
 	var name := _text(box, TitleScreen.upper(me.player_name, text.lang), _label, 14, GOLD, HORIZONTAL_ALIGNMENT_LEFT)
 	name.position = Vector2(14, 8)
 	name.size = Vector2(150, 18)
@@ -251,6 +256,15 @@ func _own_plate(size: Vector2) -> void:
 	var points := _text(box, text.format_key("hud.points %lld", [me.score()]), _label, 15, IVORY_DIM, HORIZONTAL_ALIGNMENT_RIGHT)
 	points.position = Vector2(110, 36)
 	points.size = Vector2(126, 22)
+	# How many more times coming last can be thrown for.
+	var caption := _text(box, TitleScreen.upper(_t("hud.throws"), text.lang), _label, 11, IVORY_DIM, HORIZONTAL_ALIGNMENT_LEFT)
+	caption.position = Vector2(14, 60)
+	caption.size = Vector2(150, 16)
+	var pips := Throws.new()
+	pips.left = me.throws_left()
+	pips.position = Vector2(250 - 14 - Throws.width(), 61)
+	pips.size = Vector2(Throws.width(), 14)
+	box.add_child(pips)
 
 
 # --- duel ----------------------------------------------------------------------------
@@ -263,15 +277,20 @@ func _duel(size: Vector2) -> void:
 	title.size = Vector2(800, 20)
 	var big := 52 if g.duel_stage == Match.DUEL_CHANT else 32
 	var heading := _text(_static, g.duel_heading(), _head, big, GOLD_HI, HORIZONTAL_ALIGNMENT_CENTER)
+	# The label is already in the tree with its whole line measured as its
+	# least width; switching wrapping on does not measure it again, so that
+	# is asked for before the size, or the size could not go below it.
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	heading.update_minimum_size()
 	heading.position = Vector2(mid - 560, 38)
 	heading.size = Vector2(1120, big + 16)
-	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var detail := g.duel_detail()
 	if detail != "" and g.duel_stage != Match.DUEL_SHOW and g.duel_stage != Match.DUEL_AFTER:
 		var line := _text(_static, detail, _label, 17, IVORY, HORIZONTAL_ALIGNMENT_CENTER)
-		line.position = Vector2(mid - 290, 46 + big)
-		line.size = Vector2(580, 56)
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		line.update_minimum_size()
+		line.position = Vector2(mid - 300, 46 + big)
+		line.size = Vector2(600, 78)
 	if (g.duel_stage == Match.DUEL_INTRO or g.duel_stage == Match.DUEL_CHOOSE) and g.duel_ties == 0:
 		_standings(Vector2(size.x - 330, 150))
 	if g.duel_stage == Match.DUEL_SHOW or (g.duel_stage == Match.DUEL_AFTER and not g.duel_out):
@@ -432,6 +451,9 @@ func _nameplates() -> void:
 		var token: Control = plate.get_node("Token")
 		var role: Label = plate.get_node("Role")
 		var extra: Label = plate.get_node("Extra")
+		var pips: Throws = plate.get_node("Throws")
+		pips.left = player.throws_left()
+		pips.queue_redraw()
 		name.text = player.player_name
 		var cards := int(world.call("fan_count", id)) if world.has_method("fan_count") else player.hand.size()
 		count.text = str(cards)
@@ -445,11 +467,13 @@ func _nameplates() -> void:
 		var glow := 0.5 + 0.5 * sin(_clock * 5.0)
 		style.border_color = GOLD_HI.lerp(GOLD, glow) if acting else Color(GOLD, 0.3)
 		style.set_border_width_all(2 if acting else 1)
-		plate.size = Vector2(maxf(132.0, name.get_minimum_size().x + 70.0), 30)
+		plate.size = Vector2(maxf(132.0, name.get_minimum_size().x + 70.0) + Throws.width() + 8.0, 30)
 		plate.position = Vector2(pos.x - plate.size.x * 0.5, pos.y - 6.0)
 		extra.position = Vector2(0, 32)
 		extra.size = Vector2(plate.size.x, 22)
 		count.position = Vector2(plate.size.x - 44, 4)
+		pips.position = Vector2(plate.size.x - 62 - Throws.width(), 8)
+		pips.size = Vector2(Throws.width(), 14)
 		token.position = Vector2(-30, 2)
 		role.position = Vector2(0, -17)
 		role.size = Vector2(plate.size.x, 16)
@@ -480,6 +504,9 @@ func _make_plate() -> Panel:
 	role.name = "Role"
 	var extra := _text(plate, "", _head, 17, GOLD_HI, HORIZONTAL_ALIGNMENT_CENTER)
 	extra.name = "Extra"
+	var pips := Throws.new()
+	pips.name = "Throws"
+	plate.add_child(pips)
 	return plate
 
 
@@ -616,7 +643,8 @@ func _verdict_ribbon() -> void:
 	_ribbon.pivot_offset = _ribbon.size * 0.5
 	_ribbon_age = 0.0
 	if _human_draws():
-		_flash(_t("hud.youDraw"), "", RED)
+		# Short: the holder draws two; exactly the limit or the cap: one each.
+		_flash(_t("hud.youDrawTwo" if g.outcome == Match.OUTCOME_UNDER else "hud.youDraw"), "", RED)
 
 
 func _who_draws() -> String:
@@ -788,6 +816,27 @@ func _ease_out(u: float) -> float:
 	return 1.0 - pow(1.0 - u, 3.0)
 
 
+class Throws extends Control:
+	# The throws a player has left to save their seat: a filled gold dot for
+	# each one left, a faint ring for each one used.
+	var left := Match.DUEL_LIVES
+
+	static func width() -> float:
+		return float(Match.DUEL_LIVES) * 13.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		for i in Match.DUEL_LIVES:
+			var c := Vector2(6.5 + 13.0 * i, size.y * 0.5)
+			if i < left:
+				draw_circle(c, 4.5, Color("F0DA9E"), true, -1.0, true)
+				draw_arc(c, 4.5, 0.0, TAU, 20, Color(0.42, 0.27, 0.08), 1.0, true)
+			else:
+				draw_arc(c, 4.0, 0.0, TAU, 20, Color(0.95, 0.93, 0.86, 0.45), 1.2, true)
+
+
 class Pips extends Control:
 	var round_no := 1
 	var total := 8
@@ -815,8 +864,8 @@ class Gauge extends Control:
 	var label_font: Font
 	var target := 0
 	var parts: Array = []
-	var limit := 30
-	var cap := 80
+	var limit := 25
+	var cap := 40
 	var settled := false
 
 	func _draw() -> void:
@@ -835,7 +884,8 @@ class Gauge extends Control:
 		draw_string(label_font, Vector2(18, 26), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("DDB665"))
 		draw_string(number_font, Vector2(18, 76), str(shown), HORIZONTAL_ALIGNMENT_LEFT, -1, 50, tone)
 		var bar := Rect2(118, 54, size.x - 140, 18)
-		var top := float(cap) + 8.0
+		# With no cap (two players) the bar runs a good way past the limit.
+		var top := (float(cap) if cap > 0 else float(limit) * 1.6) + 8.0
 		draw_rect(bar, Color(1, 1, 1, 0.07))
 		var x := bar.position.x
 		for i in parts.size():
@@ -844,14 +894,14 @@ class Gauge extends Control:
 			var seg := Rect2(x, bar.position.y, minf(w, bar.end.x - x), bar.size.y)
 			draw_rect(seg, Color(shade, 0.9))
 			x += w
-		for mark in [limit, cap]:
+		for mark in ([limit, cap] if cap > 0 else [limit]):
 			var mx: float = bar.position.x + bar.size.x * float(mark) / top
 			draw_line(Vector2(mx, bar.position.y - 8), Vector2(mx, bar.end.y + 8), Color("F3ECDA"), 2.0)
 			draw_string(label_font, Vector2(mx - 14, bar.position.y - 12), str(mark), HORIZONTAL_ALIGNMENT_CENTER, 28, 13, Color("F3ECDA"))
 		draw_string(label_font, Vector2(118, 98), need, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.95, 0.93, 0.86, 0.7))
 
 	func _tone(value: int) -> Color:
-		if value == cap:
+		if cap > 0 and value == cap:
 			return Color("C69CF0")
 		if value > limit:
 			return Color("86C46F")

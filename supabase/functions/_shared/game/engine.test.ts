@@ -10,7 +10,11 @@ import {
   beats,
   cardCount,
   createEngine,
+  DECK_SIZE,
   draws,
+  handFor,
+  DUEL_LIVES,
+  duelsOf,
   GameError,
   handValue,
   makeStandings,
@@ -24,6 +28,7 @@ import {
   pick,
   play,
   publicView,
+  roundsFor,
   ROCK,
   SCISSORS,
   seated,
@@ -39,34 +44,40 @@ const people = (n: number): SeatSpec[] =>
 const card = (id: number, rank: number, suit = 0): Card => ({ id, rank, suit });
 
 test("card values, outcomes, draws and throws match match.gd", () => {
-  assert.equal(handValue([card(1, 12), card(2, 0, 1)]), 21);
-  assert.equal(outcomeFor(80), OUTCOME_CAP);
-  assert.equal(outcomeFor(31), OUTCOME_OVER);
-  assert.equal(outcomeFor(30), OUTCOME_EXACT);
-  assert.equal(outcomeFor(29), OUTCOME_UNDER);
+  assert.equal(handValue([card(1, 12), card(2, 0, 1)]), 11);
+  assert.deepEqual([...Array(13).keys()].map((rank) => handValue([card(1, rank)])), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10]);
+  assert.equal(outcomeFor(40), OUTCOME_CAP);
+  assert.equal(outcomeFor(26), OUTCOME_OVER);
+  assert.equal(outcomeFor(25), OUTCOME_EXACT);
+  assert.equal(outcomeFor(24), OUTCOME_UNDER);
   assert.deepEqual(draws(OUTCOME_OVER, 2, [0, 1, 2, 3]), [0, 0, 0, 0]);
-  assert.deepEqual(draws(OUTCOME_UNDER, 2, [0, 1, 2, 3]), [0, 0, 1, 0]);
+  assert.deepEqual(draws(OUTCOME_UNDER, 2, [0, 1, 2, 3]), [0, 0, 2, 0]);
   assert.deepEqual(draws(OUTCOME_EXACT, 2, [0, 1, 2, 3]), [1, 1, 0, 1]);
   assert.deepEqual(draws(OUTCOME_EXACT, 2, [0, 2, 3]), [1, 0, 0, 1]);
   assert.deepEqual(draws(OUTCOME_CAP, 0, [0, 3]), [0, 0, 0, 1]);
-  assert.deepEqual(targetFor(4), [30, 80]);
-  assert.deepEqual(targetFor(3), [23, 60]);
-  assert.deepEqual(targetFor(2), [14, 40]);
-  assert.deepEqual(targetFor(1), [14, 40]);
-  assert.deepEqual(targetFor(0), [30, 80]);
-  assert.equal(outcomeFor(23, 23, 60), OUTCOME_EXACT);
-  assert.equal(outcomeFor(60, 23, 60), OUTCOME_CAP);
-  assert.equal(outcomeFor(24, 23, 60), OUTCOME_OVER);
-  assert.equal(outcomeFor(30, 14, 40), OUTCOME_OVER);
+  assert.deepEqual(targetFor(4), [25, 40]);
+  assert.deepEqual(targetFor(3), [18, 30]);
+  assert.deepEqual(targetFor(2), [12, 0]);
+  assert.deepEqual(targetFor(1), [12, 0]);
+  assert.deepEqual(targetFor(0), [25, 40]);
+  assert.equal(outcomeFor(18, 18, 30), OUTCOME_EXACT);
+  assert.equal(outcomeFor(30, 18, 30), OUTCOME_CAP);
+  assert.equal(outcomeFor(19, 18, 30), OUTCOME_OVER);
+  assert.equal(outcomeFor(20, 12, 0), OUTCOME_OVER, "two players have no cap");
+  assert.equal(outcomeFor(0, 12, 0), OUTCOME_UNDER);
+  assert.deepEqual([4, 3, 2].map(roundsFor), [8, 6, 4]);
+  assert.deepEqual([4, 3, 2].map(handFor), [9, 7, 5]);
   assert.ok(beats(ROCK, SCISSORS) && beats(SCISSORS, PAPER) && beats(PAPER, ROCK));
   for (let a = 0; a < 3; a++) assert.ok(!beats(a, a));
 });
 
-test("a deal: 28 cards, seven each, sorted, a seated holder", () => {
+test("a deal: 52 cards, nine each, the rest the croupier's deck", () => {
   const e = createEngine(people(4), 9, 0);
-  assert.equal(cardCount(e), 28);
+  assert.equal(cardCount(e), DECK_SIZE);
+  assert.equal(e.stock.length, 52 - 36);
+  assert.equal(e.discard.length, 0);
   for (const seat of e.seats) {
-    assert.equal(seat.hand.length, 7);
+    assert.equal(seat.hand.length, 9);
     const values = seat.hand.map((c) => handValue([c]));
     assert.deepEqual(values, [...values].sort((a, b) => a - b));
   }
@@ -75,7 +86,10 @@ test("a deal: 28 cards, seven each, sorted, a seated holder", () => {
   assert.equal(e.deadline, TIMING.deal + TIMING.turn);
 });
 
-test("the AI's pick: holder plays high, forced and free highs", () => {
+test("the AI's pick sees no face-down card", () => {
+  // The holder plays high. The others weigh what they cannot see: the
+  // same hand, pile and cards on the table pick the same card whatever
+  // the face-down cards are.
   const e = createEngine(people(0), 1, 0);
   const low = card(901, 0);
   const high = card(902, 12, 1);
@@ -83,8 +97,14 @@ test("the AI's pick: holder plays high, forced and free highs", () => {
   e.holder = 0;
   assert.equal(pick(e, 0).rank, 12);
   e.holder = 1;
-  e.table = [{ by: 1, card: card(903, 12) }, { by: 2, card: card(904, 10) }];
-  assert.equal(pick(e, 0).rank, 12, "a total already past the limit");
+  const picks = new Set<number>();
+  for (const face of [0, 4, 9, 12]) {
+    const f = structuredClone(e);
+    f.table = [{ by: 1, card: card(903, face) }, { by: 2, card: card(904, face, 1) }];
+    f.rng = 77;
+    picks.add(pick(f, 0).id);
+  }
+  assert.equal(picks.size, 1, "the face-down cards changed the bot's card");
 });
 
 test("moves out of turn, of cards not held, or out of phase are refused", () => {
@@ -112,17 +132,40 @@ test("the public view shows no hand and no face-down card", () => {
   assert.deepEqual((publicView(e).table as unknown[])[0], { by: seat });
 });
 
+test("the public view says who drew how many cards, not which", () => {
+  let checked = 0;
+  for (let seed = 1; seed <= 60 && checked < 10; seed++) {
+    const e = createEngine(people(4), seed, 0);
+    while (e.phase === "playing") advance(e, e.deadline);
+    if (e.last === null || Object.keys(e.last.drawn).length === 0) continue;
+    checked += 1;
+    const view = publicView(e).last as { drawn: Record<string, number> };
+    for (const [seatKey, ids] of Object.entries(e.last.drawn)) {
+      assert.equal(view.drawn[seatKey], ids.length);
+    }
+    assert.ok(Object.values(view.drawn).every((n) => typeof n === "number"));
+    // The engine itself still knows, for the drawer's own hand.
+    for (const [seatKey, ids] of Object.entries(e.last.drawn)) {
+      for (const id of ids) assert.ok(e.seats[Number(seatKey)].hand.some((c) => c.id === id));
+    }
+  }
+  assert.ok(checked > 0, "no round with a draw");
+});
+
 // A call, so the type checker does not assume the phase stays put
 // across advance().
 const over = (e: Engine): boolean => e.phase === "over";
 
 function invariants(e: Engine): void {
-  assert.equal(cardCount(e), 28, "cards come and go");
+  assert.equal(cardCount(e), DECK_SIZE, "cards come and go");
   const ids = new Set<number>();
   for (const s of e.seats) for (const c of s.hand) ids.add(c.id);
   for (const p of e.table) ids.add(p.card.id);
-  for (const c of e.middle) ids.add(c.id);
-  assert.equal(ids.size, 28, "a card twice");
+  for (const c of [...e.stock, ...e.discard]) ids.add(c.id);
+  assert.equal(ids.size, DECK_SIZE, "a card twice");
+  if (e.phase === "playing" || e.phase === "reveal") {
+    for (const s of e.seats) if (!s.out) assert.ok(s.hand.length > 0 || e.phase === "reveal", "a hand played out");
+  }
   // (During a throw the holder may be the one who just lost and left; the
   // next deal picks a new one.)
   if (e.phase === "playing" || e.phase === "reveal") assert.ok(!e.seats[e.holder].out, "holder left the table");
@@ -194,6 +237,50 @@ test("rock-paper-scissors: the winner never leaves, the loser only on a loss", (
     }
   }
   assert.ok(losses > 0 && ties > 0);
+});
+
+test("each player throws for their seat at most DUEL_LIVES times", () => {
+  // Coming last once more after that, they leave without a throw, so no
+  // sitting runs past every seat's throws and every exit but the last.
+  let spentSeen = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    const e = createEngine(people(4), seed * 104729, 0);
+    let steps = 0;
+    while (!over(e)) {
+      const before = e.phase;
+      advance(e, e.deadline);
+      for (const s of e.seats) assert.ok(duelsOf(s) <= DUEL_LIVES, "a throw past the limit");
+      const duel = e.duel;
+      if (before !== "duel" && duel !== null && duel.stage === "intro") {
+        const loser = e.seats[duel.loser];
+        if (duel.spent) {
+          spentSeen += 1;
+          assert.equal(duelsOf(loser), DUEL_LIVES);
+          assert.throws(() => throwHand(e, duel.loser, ROCK, e.deadline - 1), (err: unknown) => err instanceof GameError && err.code === "not_choosing");
+          advance(e, e.deadline);
+          assert.equal(e.duel!.stage, "after", "no throw once the throws are spent");
+          assert.ok(loser.out, "out without a throw");
+          assert.equal((publicView(e).duel as { spent: boolean }).spent, true);
+        }
+      }
+      steps += 1;
+      assert.ok(steps < 5000, `seed ${seed} never ended`);
+    }
+    assert.ok(e.hand <= 4 * DUEL_LIVES + 3, `seed ${seed} ran ${e.hand} hands`);
+  }
+  assert.ok(spentSeen > 0, "nobody ever ran out of throws");
+});
+
+test("engines saved before the throw limit read as no throws used", () => {
+  const e = createEngine(people(4), 5, 0);
+  for (const s of e.seats) delete s.duels;
+  while (e.phase !== "duel" && e.phase !== "over") advance(e, e.deadline);
+  if (e.phase === "duel") {
+    assert.equal(e.duel!.spent, false);
+    assert.equal(duelsOf(e.seats[e.duel!.loser]), 1);
+  }
+  const seats = publicView(e).seats as { throwsLeft: number }[];
+  assert.ok(seats.every((s) => s.throwsLeft >= 0 && s.throwsLeft <= DUEL_LIVES));
 });
 
 test("a table whose people have all gone ends at the next hand", () => {

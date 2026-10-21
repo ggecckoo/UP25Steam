@@ -1,4 +1,4 @@
-// 30-80 rules for a table played over the network: the same game as the
+// 25-40 rules for a table played over the network: the same game as the
 // Godot client's match.gd, kept here as the authority. Pure and
 // deterministic: every random draw comes from the engine's own seeded
 // generator and every timed step from the `now` (epoch ms) it is given, so
@@ -10,16 +10,27 @@
 // end of a reveal, each stage of the rock-paper-scissors throw.
 
 export const SEATS = 4;
+// A hand runs two rounds a seat and everyone is dealt a card more than that
+// (see match.gd): 8 rounds and 9 cards at four. The rest of the 52 stays
+// with the croupier, face down; every card drawn comes off it.
 export const ROUNDS = 8;
-export const HAND_SIZE = 7;
-export const DECK_SIZE = 28;
+export const HAND_SIZE = 9;
+export const DECK_SIZE = 52;
 export const PENALTY_PER_CARD = 4;
-export const LIMIT = 30;
-export const CAP = 80;
-// Limit and cap by how many are still seated (see match.gd).
-export const TARGETS: Record<number, [number, number]> = { 4: [LIMIT, CAP], 3: [23, 60], 2: [14, 40] };
-// A, 3, 5, 7, 9, J, K by rank index, as match.gd numbers them.
-export const RANKS = [0, 2, 4, 6, 8, 10, 12];
+export const LIMIT = 25;
+export const CAP = 40;
+// Limit and cap by how many are still seated (see match.gd); two players
+// have no cap (0).
+export const TARGETS: Record<number, [number, number]> = { 4: [LIMIT, CAP], 3: [18, 30], 2: [12, 0] };
+export const UNDER_DRAW = 2;
+// The bots' weighing (match.gd's pick): guesses at what they cannot see,
+// the holder's face-down card as the best of so many, how close two
+// choices must be for a bot to take the second, and the share of a sunk
+// holder's draw a bot counts for itself.
+export const GUESSES = 40;
+export const HOLDER_GUESS = 5;
+export const CLOSE = 3;
+export const SINK_SHARE = 0.7;
 
 export const OUTCOME_OVER = 0;
 export const OUTCOME_EXACT = 1;
@@ -29,6 +40,10 @@ export const OUTCOME_UNDER = 3;
 export const ROCK = 0;
 export const PAPER = 1;
 export const SCISSORS = 2;
+// How many times in a sitting a player may come last and throw for their
+// seat (match.gd's DUEL_LIVES). Coming last once more after that, they
+// leave without a throw.
+export const DUEL_LIVES = 2;
 
 // Milliseconds the table gives each step: time for the clients to show the
 // deal, a reveal, the stages of a throw; a human's time to play or throw;
@@ -60,6 +75,9 @@ export type Seat = {
   out: boolean;
   leftAfter: number;
   hand: Card[];
+  // Throws for the seat used up so far (see DUEL_LIVES). Engines saved
+  // before it existed have none: read it through duelsOf().
+  duels?: number;
 };
 
 export type Row = { seat: number; name: string; cards: number; value: number; penalty: number; score: number; leftAfter: number };
@@ -76,6 +94,8 @@ export type Duel = {
   ties: number;
   settled: boolean;
   out: boolean;
+  // The loser had no throw left: no throw, they leave after the intro.
+  spent?: boolean;
 };
 
 export type LastRound = {
@@ -99,7 +119,9 @@ export type Engine = {
   round: number;
   holder: number;
   table: Played[];
-  middle: Card[];
+  // The croupier's deck (top card last) and the cards played out this hand.
+  stock: Card[];
+  discard: Card[];
   deadline: number;
   last: LastRound | null;
   standings: Row[];
@@ -122,17 +144,21 @@ export class GameError extends Error {
 
 // --- cards ------------------------------------------------------------------------
 
+export function rankValue(rank: number): number {
+  // Ace 1, two to nine their own number, ten and the faces 10.
+  return Math.min(rank + 1, 10);
+}
+
 export function value(card: Card): number {
-  switch (card.rank) {
-    case 0:
-      return 1;
-    case 10:
-      return 15;
-    case 12:
-      return 20;
-    default:
-      return card.rank + 1;
-  }
+  return rankValue(card.rank);
+}
+
+export function roundsFor(seats: number): number {
+  return 2 * Math.min(Math.max(seats, 2), SEATS);
+}
+
+export function handFor(seats: number): number {
+  return roundsFor(seats) + 1;
 }
 
 export function handValue(hand: Card[]): number {
@@ -140,7 +166,7 @@ export function handValue(hand: Card[]): number {
 }
 
 export function outcomeFor(total: number, limit = LIMIT, cap = CAP): number {
-  if (total === cap) return OUTCOME_CAP;
+  if (cap > 0 && total === cap) return OUTCOME_CAP;
   if (total > limit) return OUTCOME_OVER;
   if (total === limit) return OUTCOME_EXACT;
   return OUTCOME_UNDER;
@@ -156,7 +182,7 @@ export function draws(outcome: number, holder: number, seats: number[]): number[
   if (outcome === OUTCOME_EXACT || outcome === OUTCOME_CAP) {
     for (const seat of seats) if (seat !== holder) plan[seat] = 1;
   } else if (outcome === OUTCOME_UNDER) {
-    plan[holder] = 1;
+    plan[holder] = UNDER_DRAW;
   }
   return plan;
 }
@@ -213,14 +239,15 @@ export function createEngine(specs: SeatSpec[], seed: number, now: number): Engi
     round: 1,
     holder: 0,
     table: [],
-    middle: [],
+    stock: [],
+    discard: [],
     deadline: now,
     last: null,
     standings: [],
     exits: [],
     champion: -1,
     duel: null,
-    seats: specs.map((spec) => ({ name: spec.name, preset: spec.preset, user: spec.user, out: false, leftAfter: 0, hand: [] })),
+    seats: specs.map((spec) => ({ name: spec.name, preset: spec.preset, user: spec.user, out: false, leftAfter: 0, hand: [], duels: 0 })),
     seq: 0,
     recorded: false,
   };
@@ -262,7 +289,7 @@ export function isBot(e: Engine, seat: number): boolean {
 
 function deal(e: Engine): void {
   const deck: Card[] = [];
-  for (const rank of RANKS) {
+  for (let rank = 0; rank < 13; rank++) {
     for (let suit = 0; suit < 4; suit++) {
       e.nextId += 1;
       deck.push({ id: e.nextId, rank, suit });
@@ -270,11 +297,13 @@ function deal(e: Engine): void {
   }
   shuffle(e, deck);
   const seats = seated(e);
+  const size = handFor(seats.length);
   for (const seat of e.seats) seat.hand = [];
   seats.forEach((seat, k) => {
-    e.seats[seat].hand = sortHand(deck.slice(k * HAND_SIZE, (k + 1) * HAND_SIZE));
+    e.seats[seat].hand = sortHand(deck.slice(k * size, (k + 1) * size));
   });
-  e.middle = deck.slice(seats.length * HAND_SIZE);
+  e.stock = deck.slice(seats.length * size);
+  e.discard = [];
   e.holder = seats[randInt(e, 0, seats.length - 1)];
   e.round = 1;
   e.standings = [];
@@ -303,24 +332,64 @@ function armTurn(e: Engine, now: number, lead = 0): void {
   }
 }
 
+export function unseenBy(e: Engine, seat: number): number[] {
+  // Values of the cards `seat` cannot see: all but its own hand and the
+  // cards turned up in earlier rounds of this hand.
+  const left = new Map<number, number>();
+  for (let rank = 0; rank < 13; rank++) left.set(rankValue(rank), (left.get(rankValue(rank)) ?? 0) + 4);
+  for (const card of [...e.seats[seat].hand, ...e.discard]) left.set(value(card), (left.get(value(card)) ?? 0) - 1);
+  const out: number[] = [];
+  for (const [v, n] of left) for (let i = 0; i < n; i++) out.push(v);
+  return out;
+}
+
 // What a bot plays, and what a human who ran out of time plays: the same
-// choice as match.gd's AI.
+// choice as match.gd's AI, which sees no face-down card. The holder plays
+// high; the others weigh each card over guesses at what they cannot see.
 export function pick(e: Engine, seat: number): Card {
   const hand = e.seats[seat].hand;
-  let low = hand[0];
   let high = hand[0];
+  const byValue = new Map<number, Card>();
   for (const card of hand) {
-    if (value(card) < value(low)) low = card;
-    if (value(card) >= value(high)) high = card;
+    if (value(card) > value(high)) high = card;
+    if (!byValue.has(value(card))) byValue.set(value(card), card);
   }
-  if (seat === e.holder) return high;
-  const running = e.table.reduce((sum, p) => sum + value(p.card), 0);
-  const after = order(e).length - 1 - e.table.length;
-  const limit = limits(e)[0];
-  if (running + value(low) + after > limit) return high;
-  if (running + value(high) + after * 20 <= limit) return high;
-  if (random(e) < 0.18 + e.round * 0.06) return high;
-  return low;
+  const unseen = unseenBy(e, seat);
+  if (seat === e.holder || unseen.length === 0 || byValue.size === 1) return high;
+  const [limit, cap] = limits(e);
+  const down = e.table.length;
+  const holderDown = down > 0 && e.table[0].by === e.holder;
+  const after = order(e).length - 1 - down;
+  const values = [...byValue.keys()];
+  const odds = new Map<number, number>(values.map((v) => [v, 0]));
+  const cost = 6.5 + PENALTY_PER_CARD;
+  const pool = [...unseen];
+  const need = Math.min(down + after, pool.length);
+  for (let guess = 0; guess < GUESSES; guess++) {
+    for (let k = 0; k < need; k++) {
+      const j = randInt(e, k, pool.length - 1);
+      [pool[k], pool[j]] = [pool[j], pool[k]];
+    }
+    let total = 0;
+    for (let k = 0; k < need; k++) {
+      if (holderDown && k === 0) {
+        let best = 0;
+        for (let t = 0; t < HOLDER_GUESS; t++) best = Math.max(best, pool[randInt(e, 0, pool.length - 1)]);
+        total += best;
+      } else {
+        total += pool[k];
+      }
+    }
+    for (const v of values) {
+      const result = outcomeFor(total + v, limit, cap);
+      if (result === OUTCOME_UNDER) odds.set(v, odds.get(v)! + cost * UNDER_DRAW * SINK_SHARE);
+      else if (result === OUTCOME_EXACT || result === OUTCOME_CAP) odds.set(v, odds.get(v)! - cost);
+    }
+  }
+  const worth = new Map<number, number>(values.map((v) => [v, v + odds.get(v)! / GUESSES]));
+  values.sort((a, b) => worth.get(b)! - worth.get(a)!);
+  if (values.length > 1 && worth.get(values[0])! - worth.get(values[1])! < CLOSE && random(e) < 0.2) return byValue.get(values[1])!;
+  return byValue.get(values[0])!;
 }
 
 export function play(e: Engine, seat: number, cardId: number, now: number): void {
@@ -348,19 +417,24 @@ function resolveRound(e: Engine, now: number): void {
   const [limit, cap] = limits(e);
   const total = e.table.reduce((sum, p) => sum + value(p.card), 0);
   const outcome = outcomeFor(total, limit, cap);
-  const pile = e.table.map((p) => p.card);
-  shuffle(e, pile);
-  pile.push(...e.middle);
+  // The round's cards are played out; whoever draws gets the croupier's top
+  // cards. A deck with too few has the played-out cards shuffled back in.
+  e.discard.push(...e.table.map((p) => p.card));
   const plan = draws(outcome, e.holder, seated(e));
+  if (plan.reduce((sum, n) => sum + n, 0) > e.stock.length) {
+    e.stock.push(...e.discard);
+    e.discard = [];
+    shuffle(e, e.stock);
+  }
   const drawn: Record<string, number[]> = {};
   for (const seat of order(e)) {
-    const count = Math.min(plan[seat], pile.length);
+    const count = Math.min(plan[seat], e.stock.length);
     if (count <= 0) continue;
-    const taken = pile.splice(0, count);
+    const taken: Card[] = [];
+    for (let k = 0; k < count; k++) taken.push(e.stock.pop()!);
     e.seats[seat].hand = sortHand([...e.seats[seat].hand, ...taken]);
     drawn[String(seat)] = taken.map((card) => card.id);
   }
-  e.middle = pile;
   e.last = { hand: e.hand, round: e.round, holder: e.holder, played: e.table, total, outcome, drawn };
   e.holder = nextSeat(e, e.holder);
   e.table = [];
@@ -379,7 +453,7 @@ function nextSeat(e: Engine, seat: number): number {
 
 function finishHand(e: Engine, now: number): void {
   if (e.phase === "duel" || e.phase === "over") return;
-  for (const p of e.table) e.middle.push(p.card);
+  for (const p of e.table) e.discard.push(p.card);
   e.table = [];
   e.standings = makeStandings(e);
   e.seq += 1;
@@ -389,9 +463,19 @@ function finishHand(e: Engine, now: number): void {
   }
   const loser = e.standings[e.standings.length - 1].seat;
   const winner = e.standings[0].seat;
+  const spent = duelsOf(e.seats[loser]) >= DUEL_LIVES;
+  if (!spent) e.seats[loser].duels = duelsOf(e.seats[loser]) + 1;
   e.phase = "duel";
-  e.duel = { loser, winner, stage: "intro", picks: {}, throws: null, ties: 0, settled: false, out: false };
+  e.duel = { loser, winner, stage: "intro", picks: {}, throws: null, ties: 0, settled: false, out: false, spent };
   e.deadline = now + TIMING.duelIntro;
+}
+
+export function duelsOf(seat: Seat): number {
+  return seat.duels ?? 0;
+}
+
+export function throwsLeft(seat: Seat): number {
+  return Math.max(0, DUEL_LIVES - duelsOf(seat));
 }
 
 export function makeStandings(e: Engine): Row[] {
@@ -411,7 +495,7 @@ export function throwHand(e: Engine, seat: number, choice: number, now: number):
   const duel = e.duel;
   if (e.phase !== "duel" || duel === null) throw new GameError("no_duel");
   if (seat !== duel.loser && seat !== duel.winner) throw new GameError("not_in_duel");
-  if (duel.stage !== "intro" && duel.stage !== "choose") throw new GameError("not_choosing");
+  if (duel.spent || (duel.stage !== "intro" && duel.stage !== "choose")) throw new GameError("not_choosing");
   if (choice !== ROCK && choice !== PAPER && choice !== SCISSORS) throw new GameError("bad_throw");
   duel.picks[String(seat)] = choice;
   e.seq += 1;
@@ -433,6 +517,13 @@ function stepDuel(e: Engine, now: number): void {
   const duel = e.duel as Duel;
   switch (duel.stage) {
     case "intro":
+      if (duel.spent) {
+        // No throw left: out after the intro, as if the throw were lost.
+        settle(e, true);
+        duel.stage = "after";
+        e.deadline = now + TIMING.after + TIMING.walkOut;
+        break;
+      }
       duel.stage = "choose";
       e.deadline = now + TIMING.duelChoose;
       if (picked(e)) {
@@ -500,7 +591,7 @@ function settle(e: Engine, loserOut: boolean): void {
     const gone = e.seats[duel.loser];
     gone.out = true;
     gone.leftAfter = e.hand;
-    e.middle.push(...gone.hand);
+    e.discard.push(...gone.hand);
     gone.hand = [];
     e.exits.push(duel.loser);
   }
@@ -549,7 +640,7 @@ export function advance(e: Engine, now: number): boolean {
       place(e, seat, pick(e, seat), e.deadline);
     } else if (e.phase === "reveal") {
       const at = e.deadline;
-      if (e.round >= ROUNDS) {
+      if (e.round >= roundsFor(seated(e).length)) {
         finishHand(e, at);
       } else {
         e.round += 1;
@@ -590,17 +681,24 @@ export function publicView(e: Engine): Record<string, unknown> {
     phase: e.phase,
     hand: e.hand,
     round: e.round,
-    rounds: ROUNDS,
+    rounds: roundsFor(seated(e).length),
     holder: e.holder,
     limit,
     cap,
     turn: acting(e),
     deadline: e.deadline,
     seq: e.seq,
-    seats: e.seats.map((s, i) => ({ seat: i, name: s.name, preset: s.preset, bot: s.user === null, out: s.out, leftAfter: s.leftAfter, cards: s.hand.length })),
+    seats: e.seats.map((s, i) => ({ seat: i, name: s.name, preset: s.preset, bot: s.user === null, out: s.out, leftAfter: s.leftAfter, cards: s.hand.length, throwsLeft: throwsLeft(s) })),
     table: e.table.map((p) => ({ by: p.by })),
-    middle: e.middle.length,
-    last: e.last,
+    // Cards in the croupier's deck, and played out.
+    stock: e.stock.length,
+    middle: e.stock.length + e.discard.length,
+    // Who drew how many, never which: the croupier gathers the round's
+    // cards and deals the drawn ones face down, so only the drawer, in
+    // their own hand, sees what they got.
+    last: e.last === null
+      ? null
+      : { ...e.last, drawn: Object.fromEntries(Object.entries(e.last.drawn).map(([seat, ids]) => [seat, ids.length])) },
     duel: duel === null
       ? null
       : {
@@ -612,6 +710,7 @@ export function publicView(e: Engine): Record<string, unknown> {
         ties: duel.ties,
         settled: duel.settled,
         out: duel.out,
+        spent: duel.spent ?? false,
       },
     standings: e.standings,
     exits: e.exits,
@@ -624,5 +723,5 @@ export function handOf(e: Engine, seat: number): Card[] {
 }
 
 export function cardCount(e: Engine): number {
-  return e.middle.length + e.table.length + e.seats.reduce((sum, s) => sum + s.hand.length, 0);
+  return e.stock.length + e.discard.length + e.table.length + e.seats.reduce((sum, s) => sum + s.hand.length, 0);
 }

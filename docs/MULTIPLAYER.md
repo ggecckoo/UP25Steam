@@ -11,7 +11,7 @@ sunucu yürütür.
 
 | Parça | Yer | Görevi |
 |---|---|---|
-| Kural motoru | `supabase/functions/_shared/game/engine.ts` | `godot/scripts/match.gd` ile aynı kurallar: deste, tur, 30/80 hedefi (3 kişide 23/60, 2 kişide 14/40), kart çekme, el sonu sıralaması, taş-kağıt-makas, masadan ayrılma. Saf ve deterministik: rastgelelik motorun kendi tohumundan, zaman dışarıdan verilen `now`'dan. |
+| Kural motoru | `supabase/functions/_shared/game/engine.ts` | `godot/scripts/match.gd` ile aynı kurallar: 52'lik deste, kişi sayısına göre kart ve tur (4 kişide 9 kart / 8 tur, 3 kişide 7 / 6, 2 kişide 5 / 4), 25/40 hedefi (3 kişide 18/30, 2 kişide 12 ve tavan yok), kartların krupiyenin destesinden çekilmesi (yetmezse atılanlar geri karılır), kapalı kartları görmeyen botlar, el sonu sıralaması, taş-kağıt-makas, masadan ayrılma. Saf ve deterministik: rastgelelik motorun kendi tohumundan, zaman dışarıdan verilen `now`'dan. |
 | Masa servisi | `supabase/functions/_shared/game/service.ts` | Lobi (oluştur, kodla katıl, ayrıl), başlat (boş koltuklara bot), hamle, zamanı ilerletme. Depolama `Store` arayüzü arkasında. |
 | Edge Function | `supabase/functions/game-table/` | HTTP uç noktası; giriş yapmış kullanıcı (`verify_jwt = true`). Postgres deposu `store.ts`. |
 | Şema | `supabase/migrations/004_multiplayer_tables.sql` | Tablolar, RLS, atomik commit fonksiyonu, Realtime yayını. |
@@ -47,8 +47,11 @@ sayaçları bir kez artar.
 `state` (motorun `publicView`'ı) şunları içerir: faz, el/tur, sıra sahibi,
 hedef/tavan, sıradaki koltuk, `deadline`, koltuklar (ad, karakter, bot mu,
 masada mı, kart sayısı), masadaki kapalı kartlar (yalnız kim attı), biten
-turun açık kartları/sonucu/kimin hangi kartı çektiği (`last`),
-taş-kağıt-makas (atışlar ancak eller inince görünür), sıralama, şampiyon.
+turun açık kartları/sonucu/kimin kaç kart çektiği (`last`; hangi kart
+olduğu yalnız çekenin kendi elinde görünür), koltuk başına kalan
+taş-kağıt-makas hakkı (`throwsLeft`), taş-kağıt-makas (atışlar ancak eller
+inince görünür; hakkı biten oyuncu atış yapmadan çıkar, `spent`), sıralama,
+şampiyon.
 Elde tutulan hiçbir kart burada yoktur.
 
 ## API — `POST /functions/v1/game-table`
@@ -97,7 +100,9 @@ node <repo>/supabase/tests/multiplayer_sql_check.mjs
 
 Kapsananlar: match.gd ile kural eşliği (`tests/check.gd`'deki değerler),
 yalnız saatle oynanan 300 tam oturum (kart korunumu, her oturum biter),
-taş-kağıt-makas (kazanan asla çıkmaz, kaybeden yalnız kaybedince),
+taş-kağıt-makas (kazanan asla çıkmaz, kaybeden yalnız kaybedince; bir
+oyuncu oturum boyunca en çok `DUEL_LIVES` = 2 kez atar, sonra atışsız
+çıkar), çekilen kartın kimliğinin herkese açık durumda görünmemesi,
 herkese açık durumda el/kapalı kart sızmaması, dört kişinin API üzerinden
 tam oturumu ve sonuçların bir kez yazılması, oyun ortasında ayrılan
 oyuncunun koltuğunun bota geçmesi, aynı masaya yarışan iki hamle, RLS.

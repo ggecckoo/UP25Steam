@@ -859,13 +859,13 @@ class Logo extends Control:
 		_cap = float(font_size) * 0.722
 		var gap := float(font_size) * 0.085
 		var bar := float(font_size) * 0.32
-		var left_w := face.get_string_size("30", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
-		var right_w := face.get_string_size("80", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		var left_w := face.get_string_size("25", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		var right_w := face.get_string_size("40", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 		var label_y := _top - (ascent - _cap)
 		_dash = Vector2(left_w + gap, bar)
 		var right_x := left_w + gap * 2.0 + bar
-		_labels.append(_digits("30", face, shader, Vector2(0.0, label_y), ascent))
-		_labels.append(_digits("80", face, shader, Vector2(right_x, label_y), ascent))
+		_labels.append(_digits("25", face, shader, Vector2(0.0, label_y), ascent))
+		_labels.append(_digits("40", face, shader, Vector2(right_x, label_y), ascent))
 		_width = right_x + right_w
 		size = Vector2(_width, _top * 2.0 + _cap)
 
@@ -1215,11 +1215,14 @@ class Crown:
 
 
 class RulesPanel extends Control:
-	# The rules, numbered, in a dark column that scrolls when they run long;
-	# each comes in a moment after the one before.
+	# The rules, numbered, in a dark column, set smaller when they would run
+	# past its foot; each comes in a moment after the one before.
 	var _scroll: ScrollContainer
 	var _list: VBoxContainer
 	var _rows: Array = []
+	# The text size the rules are set in: 17, smaller as long as they would
+	# run past the bottom of the column (the column does not scroll).
+	var _size := 17
 	var _number_face: Font
 	var _text_face: Font
 	var _key := ""
@@ -1265,6 +1268,7 @@ class RulesPanel extends Control:
 		_rows.clear()
 		visible = not lines.is_empty()
 		_scroll.scroll_vertical = 0
+		_size = 17
 		for i in lines.size():
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 16)
@@ -1281,7 +1285,8 @@ class RulesPanel extends Control:
 			line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if rtl else HORIZONTAL_ALIGNMENT_LEFT
 			line.add_theme_font_override("font", _text_face)
-			line.add_theme_font_size_override("font_size", 17)
+			line.add_theme_font_size_override("font_size", _size)
+			line.set_meta("rule", true)
 			line.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85, 0.92))
 			line.add_theme_constant_override("line_spacing", 3)
 			if rtl:
@@ -1296,6 +1301,12 @@ class RulesPanel extends Control:
 	func step(since: float, _delta: float) -> void:
 		# `since`: seconds since the rules began to come in.
 		modulate.a = smoothstep(0.0, 1.0, clampf(since / 0.4, 0.0, 1.0))
+		if _size > 13 and not _rows.is_empty() and _list.get_combined_minimum_size().y > _scroll.size.y + 1.0:
+			_size -= 1
+			for row in _rows:
+				for child in (row as Node).get_children():
+					if child.has_meta("rule"):
+						(child as Label).add_theme_font_size_override("font_size", _size)
 		for i in _rows.size():
 			(_rows[i] as Control).modulate.a = smoothstep(0.0, 1.0, clampf((since - 0.07 * float(i)) / 0.45, 0.0, 1.0))
 

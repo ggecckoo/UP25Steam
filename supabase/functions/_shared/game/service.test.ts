@@ -148,6 +148,7 @@ test("two moves racing for the same table: the loser of the race retries", async
   }
   const seat = acting(engine);
   const user = engine.seats[seat].user!;
+  const held = engine.seats[seat].hand.length;
   let raced = false;
   t.store.beforeCommit = (change) => {
     if (raced) return;
@@ -160,7 +161,7 @@ test("two moves racing for the same table: the loser of the race retries", async
   t.store.beforeCommit = null;
   const after = (await t.store.engine(made.tableId))!;
   assert.ok(raced, "a competing commit got in first");
-  assert.equal(after.seats[seat].hand.length, 6, "the card was played exactly once");
+  assert.equal(after.seats[seat].hand.length, held - 1, "the card was played exactly once");
 });
 
 test("the host leaving an unstarted table closes it", async () => {

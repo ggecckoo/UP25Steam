@@ -4,6 +4,9 @@ const TitleScreen := preload("res://scripts/title_screen.gd")
 const TableHud := preload("res://scripts/table_hud.gd")
 const HandIcons := preload("res://scripts/hand_icons.gd")
 const SAVE_PATH := "user://25-40-save.json"
+# While the game was called 30-80 its user folder was named so; a save there
+# newer than this folder's comes along the first time.
+const FORMER_FOLDER := "30-80"
 
 const SCREEN_MENU := 0
 const SCREEN_HOW := 1
@@ -40,6 +43,7 @@ func _ready() -> void:
 	mouse_filter = MOUSE_FILTER_IGNORE
 	text.load_file("res://locale/L10nCatalog.json")
 	game = Match.new()
+	_bring_save()
 	game.configure(text, SAVE_PATH)
 	theme = _make_theme()
 	_add_sound("card", _noise(0.11, 46.0, 0.28, 0.95, 11), -4.0)
@@ -50,6 +54,17 @@ func _ready() -> void:
 	_mount_world()
 	get_viewport().size_changed.connect(_on_view_resized)
 	_rebuild()
+
+
+func _bring_save() -> void:
+	var here := ProjectSettings.globalize_path(SAVE_PATH)
+	var there := OS.get_user_data_dir().get_base_dir().path_join(FORMER_FOLDER).path_join(SAVE_PATH.get_file())
+	if not FileAccess.file_exists(there):
+		return
+	if FileAccess.file_exists(here) and FileAccess.get_modified_time(here) >= FileAccess.get_modified_time(there):
+		return
+	DirAccess.make_dir_recursive_absolute(here.get_base_dir())
+	DirAccess.copy_absolute(there, here)
 
 
 func _process(delta: float) -> void:
@@ -162,6 +177,11 @@ func _input_play(event: InputEvent) -> void:
 		return
 	if game.phase == Match.PHASE_DUEL:
 		_input_duel(event)
+		return
+	# While the croupier deals, a click or Enter hurries the deal along.
+	var press: bool = event.is_action_pressed("ui_accept") or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+	if press and world != null and world.has_method("dealing") and bool(world.call("dealing")):
+		world.call("hurry", true)
 		return
 	var hand_size := 0
 	if not game.players.is_empty():
@@ -554,7 +574,7 @@ func _build_sheet() -> void:
 		SCREEN_HOW:
 			var rules: Array = []
 			for i in range(1, 9):
-				rules.append(text.t("rules.%d" % i))
+				rules.append(text.format_key("rules.%d" % i, [Match.DUEL_LIVES]))
 			data["screen"] = "how"
 			data["tagline"] = text.t("howto.title")
 			data["rules"] = rules
@@ -573,7 +593,7 @@ func _build_sheet() -> void:
 			var sound := text.t("ui.on") if game.sound_on else text.t("ui.off")
 			data["screen"] = "pause"
 			data["tagline"] = text.t("pause.title")
-			data["record"] = text.format_key("game.hand %lld", [game.hand_no]) + "  ·  " + text.format_key("game.round %lld %lld", [game.round_no, Match.ROUNDS])
+			data["record"] = text.format_key("game.hand %lld", [game.hand_no]) + "  ·  " + text.format_key("game.round %lld %lld", [game.round_no, game.rounds()])
 			data["entries"] = [
 				["resume", text.t("pause.continue"), true],
 				["pause_how", text.t("howto.title"), false],

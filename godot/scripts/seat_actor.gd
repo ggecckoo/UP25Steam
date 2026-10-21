@@ -35,6 +35,27 @@ const FP_DROP_WAIT := 0.03
 const FP_DROP_PLAY := 0.085
 const FP_PLUCK_TURN := 0.5
 const FP_ELBOW_HANG := 1.5
+# A seated opponent's fan, waiting and while choosing: how far out before the
+# chest, to the left of it and above the felt its pivot sits, and how far at
+# most it tips back toward the eyes. It faces them square to the chair, not
+# turned sideways after them, so the seats either side see its back, not
+# its edge, and the higher camera does not look onto its faces.
+const SEAT_FAN_OUT := Vector2(0.3, 0.29)
+const SEAT_FAN_SIDE := Vector2(0.07, 0.04)
+const SEAT_FAN_HIGH := Vector2(0.1, 0.13)
+const SEAT_FAN_TIP := 0.45
+# The head and neck as a solid: one point of skin per HEAD_CELL cube. No card of
+# the fan comes nearer it than HEAD_CLEAR; the fan backs away along its
+# normal at once and eases back in at HEAD_EASE metres a second. Head points
+# further than HEAD_REACH from the pivot cannot be under a card, and one
+# HEAD_DEEP behind the cards is a horn or ear past the fan's edge, not
+# something to push the fan beyond; the push stops at HEAD_PUSH_MAX.
+const HEAD_CELL := 0.028
+const HEAD_CLEAR := 0.04
+const HEAD_EASE := 0.08
+const HEAD_REACH := 0.26
+const HEAD_DEEP := 0.08
+const HEAD_PUSH_MAX := 0.14
 # After a hand: the rock-paper-scissors throw, and for a last-placed player
 # who loses it, a fist on the table and the walk out. Seconds into that: fist
 # at the top of the swing, fist on the felt, getting up, and how long getting
@@ -120,6 +141,8 @@ var punched := false
 var _duel: Dictionary = {}
 var _exit: Dictionary = {}
 var _stand: Dictionary = {}
+var _head_parts: Array = []
+var _head_push := 0.0
 static var _coats := {}
 
 
@@ -145,6 +168,7 @@ func setup(preset: String, style: String, table: Dictionary) -> void:
 	_body = _capture()
 	_unit = _skel.global_transform.basis.get_scale().x
 	_study_paws()
+	_study_head()
 	look_point = Vector3(_center.x, _felt_top, _center.z)
 	_head = _bone_world("Head")
 	var frame := _frame()
@@ -971,12 +995,18 @@ func _fp_pose(delta: float) -> void:
 	var present_goal := 1.0 if thinking or inspecting else 0.0
 	_present = lerpf(_present, present_goal, _rate(4.5, delta))
 	var holding := not fan.is_empty()
-	var left := _fp_hand_for(_fp_fan_target(), _hands.grip()) if holding else _fp_rest("Left")
+	var grip: Transform3D = _hands.grip() if first_person else _hands.hold()
+	var left := _fp_rest("Left")
+	if holding:
+		var target := _fp_fan_target()
+		if not first_person:
+			target.origin -= target.basis.z * _head_room(target, delta)
+		left = _fp_hand_for(target, grip)
 	_fp_xf["Left"] = Transform3D(_fp_xf["Left"]).interpolate_with(_fp_within_reach("Left", left), _rate(8.0, delta))
 	_fp_mix["Left"] = _shape_toward(_fp_mix["Left"], "fan" if holding else "relax", _rate(9.0, delta))
 	_hands.place("Left", _fp_xf["Left"])
 	_hands.shape("Left", _fp_mix["Left"])
-	_fan_frame = _hands.world_frame("Left", _hands.grip())
+	_fan_frame = _hands.world_frame("Left", grip)
 	_layout_fan(delta)
 	var gesture := _gesture(first_person)
 	if not gesture.is_empty():
@@ -1004,14 +1034,17 @@ func _fp_pose(delta: float) -> void:
 func _fp_fan_target() -> Transform3D:
 	# Fan pivot in front of the camera, facing it: low on the left while the
 	# others play, raised toward the middle while choosing a card. A seated
-	# opponent holds it up before the chest, faces to their own eyes.
+	# opponent holds it low before the chest, tipped back toward their eyes
+	# (see SEAT_FAN_OUT).
 	if not first_person:
 		var frame := _frame()
 		var f: Vector3 = frame["f"]
 		var l: Vector3 = frame["l"]
-		var spot: Vector3 = Vector3(frame["chest"]) + f * lerpf(0.29, 0.25, _present) + l * lerpf(0.11, 0.06, _present)
-		spot.y = _felt_top + lerpf(0.13, 0.2, _present)
-		var n := (eye_point() - spot).normalized()
+		var spot: Vector3 = Vector3(frame["chest"]) + f * lerpf(SEAT_FAN_OUT.x, SEAT_FAN_OUT.y, _present) + l * lerpf(SEAT_FAN_SIDE.x, SEAT_FAN_SIDE.y, _present)
+		spot.y = _felt_top + lerpf(SEAT_FAN_HIGH.x, SEAT_FAN_HIGH.y, _present)
+		var to := _reading_point() - spot
+		var tip := clampf(atan2(to.y, maxf(-to.dot(f), 0.01)), 0.0, SEAT_FAN_TIP)
+		var n := -f * cos(tip) + Vector3.UP * sin(tip)
 		var up := Vector3.UP - n * Vector3.UP.dot(n)
 		up = up.normalized().rotated(n, lerpf(-0.22, -0.08, _present))
 		return Transform3D(Basis(up.cross(n).normalized(), up, n), spot)
@@ -1021,6 +1054,48 @@ func _fp_fan_target() -> Transform3D:
 	var up := cam.basis.y - n * cam.basis.y.dot(n)
 	up = up.normalized().rotated(n, lerpf(FP_ROLL_WAIT, FP_ROLL_PLAY, _present))
 	return Transform3D(Basis(up.cross(n).normalized(), up, n), spot)
+
+
+func _reading_point() -> Vector3:
+	# Where a seated opponent's eyes are: eye_point() sits low on the muzzle
+	# of the long-faced heads, which is right for where they look from but
+	# would have them read their cards off their chin.
+	var head := _bone_world("Head")
+	var front := _bone_world("headfront")
+	var top := _bone_world("head_end")
+	if is_inf(front.x) or is_inf(top.x):
+		return eye_point()
+	return head + (top - head) * 0.42 + (front - head) * 0.5
+
+
+func _head_room(target: Transform3D, delta: float) -> float:
+	# How far to move the fan at `target` back along its normal, away from
+	# the eyes, so that no card of it comes within HEAD_CLEAR of the head:
+	# at once when one would, easing back in once there is room.
+	var need := 0.0
+	if not fan.is_empty():
+		var half := FPHands.CARD_HALF_SIZE + Vector2.ONE * HEAD_CLEAR
+		var reach := HEAD_REACH * HEAD_REACH
+		var cards: Array = []
+		for card in fan:
+			cards.append(_fan_local.get(card, Transform3D.IDENTITY))
+		var to_fan := target.affine_inverse()
+		for part: Dictionary in _head_parts:
+			var into_fan := to_fan * _skel.global_transform * _skel.get_bone_global_pose(int(part["bone"]))
+			for p in PackedVector3Array(part["pts"]):
+				var q := into_fan * p
+				if q.length_squared() > reach:
+					continue
+				for local: Transform3D in cards:
+					var r := local.basis.transposed() * (q - local.origin)
+					if absf(r.x) <= half.x and absf(r.y) <= half.y and r.z > -HEAD_DEEP:
+						need = maxf(need, HEAD_CLEAR + FPHands.CARD_HALF - r.z)
+	need = minf(need, HEAD_PUSH_MAX)
+	if need > _head_push:
+		_head_push = need
+	else:
+		_head_push = maxf(need, _head_push - HEAD_EASE * delta)
+	return _head_push
 
 
 func _fp_hand_for(frame: Transform3D, local: Transform3D) -> Transform3D:
@@ -1641,6 +1716,75 @@ func _study_paws() -> void:
 		_paw[side] = _describe(side, hand_idx, hand_pts)
 		_paw_pts[side] = _with_lowest(_thin(hand_pts, 120), hand_pts, 16)
 		_fore_pts[side] = _with_lowest(_thin(_core(fore_pts), 120), fore_pts, 12)
+
+
+func _study_head() -> void:
+	# The head and neck as the mesh has them, snout, jaw, horns and ears
+	# included: one skin point per HEAD_CELL cube, kept in the space of the
+	# bone it moves with (the head's tip bones move with the head).
+	var group := {}
+	for names in [["Head", "headfront", "head_end"], ["neck"]]:
+		var owner := _skel.find_bone(names[0])
+		if owner < 0:
+			continue
+		for bone_name in names:
+			var idx := _skel.find_bone(bone_name)
+			if idx >= 0:
+				group[idx] = owner
+	if group.is_empty():
+		return
+	var cell := HEAD_CELL / maxf(_unit, 0.00001)
+	var cells := {}
+	for node in find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var binds := {}
+		for owner in group.values():
+			binds[owner] = _skel.get_bone_global_rest(owner).affine_inverse()
+		var bone_of := {}
+		if mi.skin != null:
+			for b in mi.skin.get_bind_count():
+				var bone := mi.skin.get_bind_bone(b)
+				if bone < 0:
+					bone = _skel.find_bone(mi.skin.get_bind_name(b))
+				bone_of[b] = bone
+				if binds.has(bone):
+					binds[bone] = mi.skin.get_bind_pose(b)
+		for surface in mi.mesh.get_surface_count():
+			var arrays := mi.mesh.surface_get_arrays(surface)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var bones = arrays[Mesh.ARRAY_BONES]
+			var weights = arrays[Mesh.ARRAY_WEIGHTS]
+			if bones == null or weights == null or verts.is_empty():
+				continue
+			var per: int = bones.size() / verts.size()
+			for v in verts.size():
+				var best := -1
+				var best_w := 0.0
+				for k in per:
+					var w: float = weights[v * per + k]
+					if w > best_w:
+						best_w = w
+						best = int(bones[v * per + k])
+				var bone_idx := int(bone_of.get(best, best))
+				if not group.has(bone_idx):
+					continue
+				var owner: int = group[bone_idx]
+				var p: Vector3 = Transform3D(binds[owner]) * verts[v]
+				var key := Vector4i(owner, floori(p.x / cell), floori(p.y / cell), floori(p.z / cell))
+				if not cells.has(key):
+					cells[key] = p
+	_head_parts.clear()
+	var owners := {}
+	for owner in group.values():
+		owners[owner] = true
+	for owner in owners:
+		var pts := PackedVector3Array()
+		for key: Vector4i in cells:
+			if key.x == owner:
+				pts.append(cells[key])
+		_head_parts.append({"bone": owner, "pts": pts})
 
 
 func _collect(mi: MeshInstance3D, hand_idx: int, fore_idx: int, hand_pts: PackedVector3Array, fore_pts: PackedVector3Array) -> void:
