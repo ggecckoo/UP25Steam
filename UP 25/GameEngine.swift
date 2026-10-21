@@ -96,7 +96,10 @@ final class GameEngine: ObservableObject {
     /// Yönlendirmeli demoda tur sayısı.
     static let demoRounds = 2
 
-    private var middle: [Card] = []
+    /// Dağıtımdan kalan kapalı çekme destesi (üstteki kart sonda) ve bu elde
+    /// oynanıp açılmış kartlar.
+    private var stock: [Card] = []
+    private var discard: [Card] = []
     private var loop: Task<Void, Never>? = nil
     private var handGate: CheckedContinuation<Card?, Never>? = nil
     private var timeGate: CheckedContinuation<Void, Never>? = nil
@@ -144,7 +147,8 @@ final class GameEngine: ObservableObject {
             let hand = Array(deck[start ..< (start + Rules.handSize)])
             return Player(id: index, name: name, isHuman: index == 0, hand: hand)
         }
-        middle = Array(deck[(4 * Rules.handSize)...])
+        stock = Array(deck[(4 * Rules.handSize)...])
+        discard = []
 
         holder = Int.random(in: 0..<4)
         round = 1
@@ -289,14 +293,14 @@ final class GameEngine: ObservableObject {
         let r1Targets = [
             CardRef(rank: .king, suit: .spade),
             CardRef(rank: .nine, suit: .heart),
-            CardRef(rank: .seven, suit: .diamond),
-            CardRef(rank: .five, suit: .club),
+            CardRef(rank: .eight, suit: .diamond),
+            CardRef(rank: .seven, suit: .club),
         ]
         let r2Targets = [
-            CardRef(rank: .ace, suit: .spade),
+            CardRef(rank: .two, suit: .spade),
             CardRef(rank: .three, suit: .heart),
-            CardRef(rank: .ace, suit: .diamond),
-            CardRef(rank: .three, suit: .club),
+            CardRef(rank: .four, suit: .diamond),
+            CardRef(rank: .five, suit: .club),
         ]
 
         let reserved = Set((r1Targets + r2Targets).map { "\($0.rank.rawValue)\($0.suit.rawValue)" })
@@ -315,13 +319,14 @@ final class GameEngine: ObservableObject {
             Player(id: 0, name: "Sen", isHuman: true,
                    hand: hand(script: [r1Targets[0], r2Targets[3]], fillFrom: 0)),
             Player(id: 1, name: "Kemal", isHuman: false,
-                   hand: hand(script: [r1Targets[1], r2Targets[0]], fillFrom: 5)),
+                   hand: hand(script: [r1Targets[1], r2Targets[0]], fillFrom: 7)),
             Player(id: 2, name: "Nur", isHuman: false,
-                   hand: hand(script: [r1Targets[2], r2Targets[1]], fillFrom: 10)),
+                   hand: hand(script: [r1Targets[2], r2Targets[1]], fillFrom: 14)),
             Player(id: 3, name: "Sabri", isHuman: false,
-                   hand: hand(script: [r1Targets[3], r2Targets[2]], fillFrom: 15)),
+                   hand: hand(script: [r1Targets[3], r2Targets[2]], fillFrom: 21)),
         ]
-        middle = Array(filler[20...])
+        stock = Array(filler[28...])
+        discard = []
     }
 
     func beginDemoPlay() {
@@ -371,8 +376,8 @@ final class GameEngine: ObservableObject {
             script: [
                 .init(rank: .king, suit: .spade),
                 .init(rank: .nine, suit: .heart),
-                .init(rank: .seven, suit: .diamond),
-                .init(rank: .five, suit: .club),
+                .init(rank: .eight, suit: .diamond),
+                .init(rank: .seven, suit: .club),
             ],
             humanHint: .demoTapHigh
         )
@@ -390,10 +395,10 @@ final class GameEngine: ObservableObject {
 
         await playDemoRound(
             script: [
-                .init(rank: .ace, suit: .spade),
+                .init(rank: .two, suit: .spade),
                 .init(rank: .three, suit: .heart),
-                .init(rank: .ace, suit: .diamond),
-                .init(rank: .three, suit: .club),
+                .init(rank: .four, suit: .diamond),
+                .init(rank: .five, suit: .club),
             ],
             humanHint: .demoTapLow
         )
@@ -471,12 +476,15 @@ final class GameEngine: ObservableObject {
                 status = .thinking(players[pi].name)
                 await sleep(aiDelay)
                 if Task.isCancelled { return }
+                // Bot masadaki kapalı kartları görmez: yalnız kendi elini,
+                // kapalı kart sayısını ve önceki turlarda açılanları bilir.
                 let card = AI.pick(
                     hand: players[pi].hand,
                     isHolder: pi == holder,
-                    running: tableSum,
-                    after: 3 - slot,
-                    round: round
+                    unseen: AI.unseen(hand: players[pi].hand, discard: discard),
+                    down: table.count,
+                    holderDown: table.first?.by == holder,
+                    after: 3 - slot
                 )
                 place(card, by: pi)
                 status = .played(players[pi].name)
@@ -565,18 +573,25 @@ final class GameEngine: ObservableObject {
         phase = .playing
     }
 
+    /// Turun kartları atılanlara gider; kart çeken, çekme destesinin
+    /// üstünden kapalı alır. Deste yetmezse önce atılanlar desteye katılıp
+    /// karılır.
     private func apply() {
-        var pile = table.map(\.card).shuffled() + middle
+        discard.append(contentsOf: table.map(\.card))
         let plan = RoundRules.draws(outcome: outcome ?? .under, holder: holder, order: order)
+        if plan.values.reduce(0, +) > stock.count {
+            stock.append(contentsOf: discard)
+            discard = []
+            stock.shuffle()
+        }
 
         for pi in order {
             guard let count = plan[pi], count > 0 else { continue }
-            let take = min(count, pile.count)
-            players[pi].hand.append(contentsOf: pile.prefix(take))
-            pile.removeFirst(take)
+            let take = min(count, stock.count)
+            players[pi].hand.append(contentsOf: stock.suffix(take).reversed())
+            stock.removeLast(take)
         }
 
-        middle = pile
         holder = (holder + 1) % 4
     }
 

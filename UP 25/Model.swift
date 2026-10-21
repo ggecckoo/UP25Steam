@@ -6,12 +6,14 @@ import Foundation
 // MARK: - Kural sabitleri
 // Bu sayılar ölçülmüştür, keyfi değildir. Gerekçeleri tasarım dokümanında.
 enum Rules {
-    static let limit           = 30    // eşik: sıra sahibi bunu aşmak zorunda
-    static let cap             = 80    // 4×20: dört King masayı cezalandırır
+    static let limit           = 25    // eşik: sıra sahibi bunu aşmak zorunda
+    static let cap             = 40    // 4×10: herkes en yüksek atarsa masa cezası
     static let rounds          = 8     // 4'ün katı -> sıra sahipliği 2-2-2-2 dağılır
-    static let handSize        = 7     // 7 x 4 = 28, deste tam biter
+    static let handSize        = 9     // turdan bir fazla: kimsenin eli bitmez; 9 x 4 = 36
+    static let deckSize        = 52    // kalan 16 kart kapalı çekme destesi olur
     static let penaltyPerCard  = 4     // elde kalan her kart için ceza puanı
-    static let gaugeMax        = 80.0  // eşik göstergesinin üst sınırı
+    static let underDraw       = 2     // 25'in altında kalan sıra sahibinin çektiği kart
+    static let gaugeMax        = 40.0  // eşik göstergesinin üst sınırı
 
     // Tempo (saniye)
     static let aiDelay   = 1.15  // rakip hamleleri arası
@@ -43,26 +45,14 @@ enum Rank: String, CaseIterable {
         case .seven: return 7
         case .eight: return 8
         case .nine:  return 9
-        case .ten, .queen: return 10
-        case .jack: return 15
-        case .king: return 20
+        case .ten, .jack, .queen, .king: return 10
         }
     }
 
     var isCourt: Bool { self == .jack || self == .queen || self == .king }
 
-    var face: String {
-        switch self {
-        case .ace: return "A"
-        case .three: return "3"
-        case .five: return "5"
-        case .seven: return "7"
-        case .nine: return "9"
-        case .jack: return "J"
-        case .king: return "K"
-        default: return rawValue
-        }
-    }
+    /// Kartın köşesinde ve ortasında yazan: A, 2–10, J, Q, K.
+    var face: String { rawValue }
 }
 
 // MARK: - Kart
@@ -76,7 +66,7 @@ struct Card: Identifiable, Equatable {
 
     static func shuffledDeck() -> [Card] {
         var deck: [Card] = []
-        for rank in [Rank.ace, .three, .five, .seven, .nine, .jack, .king] {
+        for rank in Rank.allCases {
             for suit in Suit.allCases {
                 deck.append(Card(rank: rank, suit: suit))
             }
@@ -107,10 +97,10 @@ struct Played: Identifiable {
 
 // MARK: - Tur sonucu
 enum Outcome: Equatable {
-    case over        // 30 < toplam, 80 değil -> sıra sahibi kart çekmez
-    case exact       // toplam = 30       -> sıra sahibi hariç herkes 1 kart
-    case cap         // toplam = 80       -> sıra sahibi hariç herkes 1 kart
-    case under       // toplam < 30       -> sıra sahibi 1 kart çeker
+    case over        // 25 < toplam, 40 değil -> sıra sahibi kart çekmez
+    case exact       // toplam = 25       -> sıra sahibi hariç herkes 1 kart
+    case cap         // toplam = 40       -> sıra sahibi hariç herkes 1 kart
+    case under       // toplam < 25       -> sıra sahibi 2 kart çeker
 }
 
 // MARK: - Sonuç tablosu satırı
@@ -127,7 +117,7 @@ struct Standing: Identifiable {
 // Motor ve testler aynı kaynağı kullanır; kural tek yerde tanımlıdır.
 enum RoundRules {
     static func outcome(for total: Int) -> Outcome {
-        // 80 önce: aksi halde >30 dalı onu "over" sayardı.
+        // 40 önce: aksi halde >25 dalı onu "over" sayardı.
         if total == Rules.cap { return .cap }
         if total > Rules.limit { return .over }
         if total == Rules.limit { return .exact }
@@ -137,7 +127,8 @@ enum RoundRules {
     /// Hangi oyuncunun kaç kart çekeceğini döner.
     /// over  -> kimse çekmez, atılan kartlar yanar
     /// exact / cap -> sıra sahibi hariç herkes 1 kart
-    /// under -> sıra sahibi 1 kart
+    /// under -> sıra sahibi 2 kart
+    /// Kartlar her zaman çekme destesinin üstünden gelir (GameEngine.apply).
     static func draws(outcome: Outcome, holder: Int, order: [Int]) -> [Int: Int] {
         switch outcome {
         case .over:
@@ -147,30 +138,88 @@ enum RoundRules {
             for player in order where player != holder { plan[player] = 1 }
             return plan
         case .under:
-            return [holder: 1]
+            return [holder: Rules.underDraw]
         }
     }
 }
 
 // MARK: - Yapay zeka
-// Sıra sahibi 25'i geçmek ister -> en yükseğini atar.
-// Diğerleri iki şey ister: sıra sahibini yakmak (düşük at) ve kendi puanını
-// düşürmek (yüksek at). Karar masadaki duruma bakar.
+// Bot, masadaki bir oyuncunun bildiğini bilir: kendi elini, bu tur masada kaç
+// kapalı kart olduğunu ve sıra sahibininkinin aralarında olup olmadığını,
+// önceki turlarda açılmış kartları. Kapalı kartları ve masa toplamını görmez.
+// Sıra sahibi en yükseğini atar. Diğerleri her kartı, göremedikleri kartlar
+// için yapılan `guesses` tahmin üzerinden tartar: atılan kart puanı kadar
+// değerlidir, sıra sahibini batırmak onun çekeceği iki kartın bir payı kadar,
+// toplamı tam 25 ya da 40 yapmak ise kendi çekeceği bir kart kadar pahalıdır.
+// İlk iki seçenek birbirine yakınsa beşte bir ikinciyi oynar.
 enum AI {
-    static func pick(hand: [Card], isHolder: Bool, running: Int, after: Int, round: Int) -> Card {
-        let sorted = hand.sorted { $0.value < $1.value }
-        guard let low = sorted.first, let high = sorted.last else { return hand[0] }
+    static let guesses = 40
+    static let holderGuess = 5
+    static let close = 3.0
+    static let sinkShare = 0.7
 
-        if isHolder { return high }
+    /// `unseen`: botun göremediği kartların değerleri (destedeki tüm kartlar
+    /// eksi kendi eli eksi açılmış kartlar); `down`: masadaki kapalı kart
+    /// sayısı; `after`: kendisinden sonra oynayacak oyuncu sayısı.
+    static func pick<G: RandomNumberGenerator>(hand: [Card], isHolder: Bool, unseen: [Int],
+                                                down: Int, holderDown: Bool, after: Int,
+                                                using rng: inout G) -> Card {
+        guard var high = hand.first else { fatalError("boş el") }
+        var byValue: [Int: Card] = [:]
+        for card in hand {
+            if card.value > high.value { high = card }
+            if byValue[card.value] == nil { byValue[card.value] = card }
+        }
+        if isHolder || unseen.isEmpty || byValue.count == 1 { return high }
 
-        // En küçüğümü atsam bile eşik aşılacak -> yaktırmak imkânsız
-        if running + low.value + after * 1 > Rules.limit { return high }
+        let values = byValue.keys.sorted()
+        var odds = Dictionary(uniqueKeysWithValues: values.map { ($0, 0.0) })
+        let cost = 6.5 + Double(Rules.penaltyPerCard)
+        var pool = unseen
+        let need = min(down + after, pool.count)
+        for _ in 0..<guesses {
+            for k in 0..<need {
+                pool.swapAt(k, Int.random(in: k..<pool.count, using: &rng))
+            }
+            var total = 0
+            for k in 0..<need {
+                if holderDown && k == 0 {
+                    var best = 0
+                    for _ in 0..<holderGuess { best = max(best, pool[Int.random(in: 0..<pool.count, using: &rng)]) }
+                    total += best
+                } else {
+                    total += pool[k]
+                }
+            }
+            for value in values {
+                switch RoundRules.outcome(for: total + value) {
+                case .under: odds[value, default: 0] += cost * Double(Rules.underDraw) * sinkShare
+                case .exact, .cap: odds[value, default: 0] -= cost
+                case .over: break
+                }
+            }
+        }
+        let worth = Dictionary(uniqueKeysWithValues: values.map { ($0, Double($0) + odds[$0, default: 0] / Double(guesses)) })
+        let ranked = values.sorted { worth[$0]! > worth[$1]! }
+        if ranked.count > 1, worth[ranked[0]]! - worth[ranked[1]]! < close,
+           Double.random(in: 0..<1, using: &rng) < 0.2 {
+            return byValue[ranked[1]]!
+        }
+        return byValue[ranked[0]]!
+    }
 
-        // En yükseğimi atsam bile eşik aşılmaz -> bedava, puanını düşür
-        if running + high.value + after * Rank.king.value <= Rules.limit { return high }
+    static func pick(hand: [Card], isHolder: Bool, unseen: [Int], down: Int, holderDown: Bool, after: Int) -> Card {
+        var rng = SystemRandomNumberGenerator()
+        return pick(hand: hand, isHolder: isHolder, unseen: unseen, down: down,
+                    holderDown: holderDown, after: after, using: &rng)
+    }
 
-        // Gerçek ikilem: tur ilerledikçe puan kaygısı ağırlaşır
-        let dumpChance = 0.18 + Double(round) * 0.06
-        return Double.random(in: 0..<1) < dumpChance ? high : low
+    /// Bir oyuncunun göremediği kartların değerleri: destedeki 52 kart, eksi
+    /// kendi eli, eksi önceki turlarda açılıp atılmış kartlar.
+    static func unseen(hand: [Card], discard: [Card]) -> [Int] {
+        var left: [Int: Int] = [:]
+        for rank in Rank.allCases { left[rank.value, default: 0] += 4 }
+        for card in hand + discard { left[card.value, default: 0] -= 1 }
+        return left.keys.sorted().flatMap { value in Array(repeating: value, count: max(left[value] ?? 0, 0)) }
     }
 }

@@ -646,11 +646,11 @@ private struct ThresholdGauge: View {
                         .overlay(Rectangle().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
 
                         ZStack {
-                            Text("30")
+                            Text("\(Rules.limit)")
                                 .font(Typo.labelCaption(bold: true))
                                 .foregroundColor(.brass)
                                 .position(x: mark25, y: 9)
-                            Text("40")
+                            Text("\(Rules.cap)")
                                 .font(Typo.labelCaption(bold: true))
                                 .foregroundColor(.brass.opacity(0.85))
                                 .position(x: trackW, y: 9)

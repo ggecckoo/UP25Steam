@@ -25,11 +25,12 @@ type cardDisk struct {
 }
 
 type resumeDisk struct {
-	Round  int          `json:"round"`
-	Holder int          `json:"holder"`
-	Names  []string     `json:"names"`
-	Hands  [][]cardDisk `json:"hands"`
-	Middle []cardDisk   `json:"middle"`
+	Round   int          `json:"round"`
+	Holder  int          `json:"holder"`
+	Names   []string     `json:"names"`
+	Hands   [][]cardDisk `json:"hands"`
+	Stock   []cardDisk   `json:"stock"`
+	Discard []cardDisk   `json:"discard"`
 }
 
 type saveDisk struct {
@@ -81,7 +82,8 @@ func (e *Engine) load() {
 	}
 	if !e.restore(file.Resume) {
 		e.Players = nil
-		e.middle = nil
+		e.stock = nil
+		e.discard = nil
 		e.Table = nil
 		e.canResume = false
 		e.Phase = PhaseMenu
@@ -118,7 +120,12 @@ func (e *Engine) restore(file *resumeDisk) bool {
 		}
 		hands[i] = hand
 	}
-	middle, ok := take(file.Middle)
+	stock, ok := take(file.Stock)
+	if !ok {
+		return false
+	}
+	discard, ok := take(file.Discard)
+	// A save from another deck (the 28-card 30-80 one) does not resume.
 	if !ok || total != DeckSize {
 		return false
 	}
@@ -135,7 +142,8 @@ func (e *Engine) restore(file *resumeDisk) bool {
 		e.Players[i] = Player{ID: i, Name: names[i], Human: i == 0, Hand: hands[i]}
 	}
 	sortHand(e.Players[0].Hand)
-	e.middle = middle
+	e.stock = stock
+	e.discard = discard
 	e.Holder = file.Holder
 	e.Round = file.Round
 	e.Table = nil
@@ -193,11 +201,12 @@ func (e *Engine) resumeSnapshot() *resumeDisk {
 		}
 	}
 	file := &resumeDisk{
-		Round:  e.Round,
-		Holder: e.Holder,
-		Names:  make([]string, 4),
-		Hands:  make([][]cardDisk, 4),
-		Middle: cardsToDisk(e.middle),
+		Round:   e.Round,
+		Holder:  e.Holder,
+		Names:   make([]string, 4),
+		Hands:   make([][]cardDisk, 4),
+		Stock:   cardsToDisk(e.stock),
+		Discard: cardsToDisk(e.discard),
 	}
 	for i := 0; i < 4; i++ {
 		file.Names[i] = e.Players[i].Name

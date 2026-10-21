@@ -1029,61 +1029,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "الهدف: بعد 12 جولة يفوز الأقل عددًا وقيمة. النقاط = القيمة + 4 جزاء لكل ورقة."
+            "value" : "الهدف: بعد 8 جولة يفوز الأقل عددًا وقيمة. النقاط = القيمة + 4 جزاء لكل ورقة."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ziel: nach 12 Runden gewinnen die wenigsten und niedrigsten Karten. Punkte = Werte + 4 Strafe je Karte."
+            "value" : "Ziel: nach 8 Runden gewinnen die wenigsten und niedrigsten Karten. Punkte = Werte + 4 Strafe je Karte."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Goal: after 12 rounds, fewest cards and lowest values win. Score = card values + 4 penalty per card."
+            "value" : "Goal: after 8 rounds, fewest cards and lowest values win. Score = card values + 4 penalty per card."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Meta: tras 12 rondas, menos cartas y menor valor gana. Puntos = valor + 4 de penalización por carta."
+            "value" : "Meta: tras 8 rondas, menos cartas y menor valor gana. Puntos = valor + 4 de penalización por carta."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "But : après 12 tours, le moins de cartes et la plus faible valeur gagne. Score = valeur + 4 de pénalité / carte."
+            "value" : "But : après 8 tours, le moins de cartes et la plus faible valeur gagne. Score = valeur + 4 de pénalité / carte."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "लक्ष्य: 12 राउंड बाद सबसे कम और कम मान वाले पत्ते जीतते हैं। स्कोर = मान + प्रति पत्ता 4 जुर्माना।"
+            "value" : "लक्ष्य: 8 राउंड बाद सबसे कम और कम मान वाले पत्ते जीतते हैं। स्कोर = मान + प्रति पत्ता 4 जुर्माना।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "目標：12ラウンド後、枚数と点数が最も低い手が勝ち。得点＝点数＋1枚あたり罰則4。"
+            "value" : "目標：8ラウンド後、枚数と点数が最も低い手が勝ち。得点＝点数＋1枚あたり罰則4。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Objetivo: após 12 rodadas, menos cartas e menor valor vence. Pontos = valor + 4 de penalidade por carta."
+            "value" : "Objetivo: após 8 rodadas, menos cartas e menor valor vence. Pontos = valor + 4 de penalidade por carta."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Amaç: 12 tur sonunda en az ve en düşük değerli kartlar kazanır. Puan = kart değeri + kart başına 4 ceza."
+            "value" : "Amaç: 8 tur sonunda en az ve en düşük değerli kartlar kazanır. Puan = kart değeri + kart başına 4 ceza."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "目标：12轮后牌最少且点数最低者胜。得分=点数+每张4罚分。"
+            "value" : "目标：8轮后牌最少且点数最低者胜。得分=点数+每张4罚分。"
           }
         }
       }
@@ -1289,61 +1289,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "أقل من 25 — صاحب الدور يسحب ورقتين من الطاولة."
+            "value" : "أقل من 25 — صاحب الدور يسحب ورقتين من الرزمة."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Unter 25 — Zugführer zieht 2 vom Tisch."
+            "value" : "Unter 25 — Zugführer zieht 2 vom Stapel."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Under 25 — holder draws 2 from the table."
+            "value" : "Under 25 — holder draws 2 from the deck."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Menos de 25 — el dueño roba 2 de la mesa."
+            "value" : "Menos de 25 — el dueño roba 2 del mazo."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sous 25 — le maître pioche 2 depuis la table."
+            "value" : "Sous 25 — le maître pioche 2 cartes."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "25 नहीं पहुँचा — धारक मेज से 2 लेता है।"
+            "value" : "25 नहीं पहुँचा — धारक गड्डी से 2 लेता है।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "25未満 — 親が場から2枚引く。"
+            "value" : "25未満 — 親が山札から2枚引く。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Abaixo de 25 — o dono compra 2 da mesa."
+            "value" : "Abaixo de 25 — o dono compra 2 do monte."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "25 aşılmadı — sıra sahibi masadan 2 kart çeker."
+            "value" : "25 aşılmadı — sıra sahibi desteden 2 kart çeker."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未过25 — 坐庄者从桌上抽2张。"
+            "value" : "未过25 — 坐庄者从牌堆抽2张。"
           }
         }
       }
@@ -4864,61 +4864,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "عندما يحين دورك يجب أن يتجاوز مجموع الأوراق الملقاة على الطاولة 25. بعد 12 جولة يفوز من لديه أقل عدد وأقل قيمة من الأوراق."
+            "value" : "عندما يحين دورك يجب أن يتجاوز مجموع الأوراق الملقاة على الطاولة 25. بعد 8 جولة يفوز من لديه أقل عدد وأقل قيمة من الأوراق."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wenn du am Zug bist, muss die Summe der auf den Tisch gelegten Karten 25 überschreiten. Nach 12 Runden gewinnt, wer die wenigsten und niedrigsten Karten hat."
+            "value" : "Wenn du am Zug bist, muss die Summe der auf den Tisch gelegten Karten 25 überschreiten. Nach 8 Runden gewinnt, wer die wenigsten und niedrigsten Karten hat."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "On your turn, the cards played to the table must total more than 25. After 12 rounds, whoever has the fewest and lowest-value cards wins."
+            "value" : "On your turn, the cards played to the table must total more than 25. After 8 rounds, whoever has the fewest and lowest-value cards wins."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "En tu turno, el total de las cartas jugadas en la mesa debe superar 25. Tras 12 rondas, gana quien tenga menos cartas y de menor valor."
+            "value" : "En tu turno, el total de las cartas jugadas en la mesa debe superar 25. Tras 8 rondas, gana quien tenga menos cartas y de menor valor."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "À ton tour, le total des cartes jouées sur la table doit dépasser 25. Après 12 tours, gagne celui qui a le moins de cartes et de plus faible valeur."
+            "value" : "À ton tour, le total des cartes jouées sur la table doit dépasser 25. Après 8 tours, gagne celui qui a le moins de cartes et de plus faible valeur."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "जब तुम्हारी बारी हो, मेज पर फेंके गए पत्तों का योग 25 से अधिक होना चाहिए। 12 राउंड बाद सबसे कम और सबसे कम मान वाले पत्ते वाला जीतेगा।"
+            "value" : "जब तुम्हारी बारी हो, मेज पर फेंके गए पत्तों का योग 25 से अधिक होना चाहिए। 8 राउंड बाद सबसे कम और सबसे कम मान वाले पत्ते वाला जीतेगा।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自分の番では場に出た札の合計が25を超えなければならない。12ラウンド後、枚数が最も少なく点数が最も低い手が勝ち。"
+            "value" : "自分の番では場に出た札の合計が25を超えなければならない。8ラウンド後、枚数が最も少なく点数が最も低い手が勝ち。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Na sua vez, o total das cartas jogadas na mesa deve passar de 25. Após 12 rodadas, vence quem tiver menos cartas e de menor valor."
+            "value" : "Na sua vez, o total das cartas jogadas na mesa deve passar de 25. Após 8 rodadas, vence quem tiver menos cartas e de menor valor."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sıra sendeyken masaya atılan kartların toplamı 25'i aşmalı. 12 turun sonunda en az sayıda ve en düşük değerde kartları olan kazanır."
+            "value" : "Sıra sendeyken masaya atılan kartların toplamı 25'i aşmalı. 8 turun sonunda en az sayıda ve en düşük değerde kartları olan kazanır."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "轮到你时，打到桌上的牌总和必须超过25。12轮后，牌最少且点数最低者获胜。"
+            "value" : "轮到你时，打到桌上的牌总和必须超过25。8轮后，牌最少且点数最低者获胜。"
           }
         }
       }
@@ -5969,61 +5969,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "يحصل الجميع على 13 ورقة. اللعبة 12 جولة وتُوزَّع الورقة كلها."
+            "value" : "تُستخدم أوراق اللعب الـ52 كلها. يحصل كل لاعب على 9 أوراق، وتبقى الـ16 الباقية مقلوبة كرزمة للسحب. اللعبة 8 جولات. الآس بـ1، ومن 2 إلى 9 بقيمتها، والـ10 والولد والبنت والشايب بـ10 لكلٍّ منها."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jeder erhält 13 Karten. Das Spiel geht über 12 Runden; das ganze Deck wird verteilt."
+            "value" : "Gespielt wird mit allen 52 Karten. Jeder erhält 9 Karten, die übrigen 16 bleiben verdeckt als Ziehstapel. Das Spiel geht über 8 Runden. Ass zählt 1, 2 bis 9 ihren Wert, 10, Bube, Dame und König je 10."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Everyone gets 13 cards. The game lasts 12 rounds; the deal uses the whole deck."
+            "value" : "The deck is all 52 cards. Everyone gets 9 cards; the other 16 stay face down as the draw deck. The game lasts 8 rounds. An ace counts 1, 2 to 9 their own number, and 10, Jack, Queen and King 10 each."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cada uno recibe 13 cartas. La partida dura 12 rondas; se reparte todo el mazo."
+            "value" : "La baraja tiene las 52 cartas. Cada uno recibe 9; las otras 16 quedan boca abajo como mazo para robar. La partida dura 8 rondas. El as vale 1, del 2 al 9 su número, y el 10, la J, la Q y la K valen 10."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Chacun reçoit 13 cartes. La partie dure 12 tours ; tout le paquet est distribué."
+            "value" : "Le jeu compte les 52 cartes. Chacun en reçoit 9 ; les 16 autres restent face cachée et forment la pioche. La partie dure 8 tours. L'as vaut 1, du 2 au 9 leur valeur, et le 10, le valet, la dame et le roi valent 10."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "सबको 13 पत्ते मिलते हैं। खेल 12 राउंड का है; पूरी गड्डी बँटती है।"
+            "value" : "पूरी 52 पत्तों की गड्डी चलती है। सबको 9 पत्ते मिलते हैं, बाकी 16 पत्ते उल्टे रखकर खींचने की गड्डी बनते हैं। खेल 8 राउंड का है। इक्का 1, 2 से 9 अपना अंक, और 10, गुलाम, बेगम और बादशाह 10-10 गिने जाते हैं।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "全員13枚。全12ラウンドでデッキを配り切る。"
+            "value" : "52枚すべてを使う。全員に9枚配り、残り16枚は裏向きの山札になる。全8ラウンド。Aは1、2〜9は数字どおり、10・J・Q・Kはそれぞれ10。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Todos recebem 13 cartas. O jogo tem 12 rodadas; o baralho inteiro é distribuído."
+            "value" : "O baralho tem as 52 cartas. Cada um recebe 9; as outras 16 ficam viradas para baixo como monte de compra. O jogo tem 8 rodadas. O ás vale 1, do 2 ao 9 o próprio número, e 10, valete, dama e rei valem 10."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Herkes 13 kart alır. Oyun 12 tur sürer; deste tamamen dağıtılır."
+            "value" : "Deste 52 karttır. Herkes 9 kart alır, kalan 16 kart kapalı çekme destesi olur. Oyun 8 tur sürer. As 1, 2'den 9'a kadar kartlar kendi değeri, 10, Vale, Kız ve Papaz 10 sayılır."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每人13张牌。共12轮；整副牌发完。"
+            "value" : "使用整副52张牌。每人9张，其余16张背面朝下作为摸牌堆。共8轮。A算1，2到9按点数，10、J、Q、K各算10。"
           }
         }
       }
@@ -6164,61 +6164,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "إن تجاوز المجموع 25 لا يسحب صاحب الدور. وإن لم يتجاوز، يسحب ورقتين عشوائيًا من الأوراق الأربع الملقاة في الوسط في تلك الجولة."
+            "value" : "إن تجاوز المجموع 25 لا يسحب صاحب الدور. وإن لم يتجاوز، يسحب ورقتين مقلوبتين من أعلى رزمة السحب."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wird 25 überschritten, zieht der Zugführer keine Karte. Wird sie nicht überschritten, zieht er zufällig 2 der vier in dieser Runde in die Mitte gelegten Karten."
+            "value" : "Wird 25 überschritten, zieht der Zugführer keine Karte. Sonst zieht er 2 verdeckte Karten oben vom Ziehstapel."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If 25 is exceeded, the holder draws no cards. If not, they draw 2 random cards from the four played to the middle that turn."
+            "value" : "If 25 is exceeded, the holder draws no cards. If not, they draw 2 cards from the top of the draw deck, face down."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si se supera 25, el dueño del turno no roba. Si no se supera, roba al azar 2 de las cuatro cartas jugadas al centro en ese turno."
+            "value" : "Si se supera 25, el dueño del turno no roba. Si no se supera, roba 2 cartas boca abajo de lo alto del mazo."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si 25 est dépassé, le maître de tour ne pioche pas. Sinon, il pioche au hasard 2 des quatre cartes jouées au centre pendant ce tour."
+            "value" : "Si 25 est dépassé, le maître de tour ne pioche pas. Sinon, il pioche 2 cartes face cachée sur le dessus de la pioche."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "अगर 25 पार हो जाए तो धारक पत्ता नहीं लेता। नहीं तो उस दौर में बीच में फेंके गए चार पत्तों में से यादृच्छिक 2 लेता है।"
+            "value" : "अगर 25 पार हो जाए तो धारक पत्ता नहीं लेता। नहीं तो वह खींचने की गड्डी के ऊपर से 2 उल्टे पत्ते लेता है।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "25を超えた場合、親はカードを引かない。超えなければ、そのターンに場へ出された4枚からランダムに2枚引く。"
+            "value" : "25を超えた場合、親はカードを引かない。超えなければ、山札の上から裏向きのまま2枚引く。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Se 25 for ultrapassado, o dono da vez não compra. Se não for, compra aleatoriamente 2 das quatro cartas jogadas ao centro naquela rodada."
+            "value" : "Se 25 for ultrapassado, o dono da vez não compra. Se não for, compra 2 cartas viradas para baixo do topo do monte."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "25 aşılırsa sıra sahibi kart çekmez. Aşılmazsa ortaya o turda atılan dört karttan rastgele 2 kart çeker."
+            "value" : "25 aşılırsa sıra sahibi kart çekmez. Aşılmazsa çekme destesinin üstünden kapalı 2 kart çeker."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "若超过25，坐庄者不抽牌。若未超过，则从该回合打到中间的四张牌中随机抽2张。"
+            "value" : "若超过25，坐庄者不抽牌。若未超过，则从摸牌堆顶抽2张暗牌。"
           }
         }
       }
@@ -6294,61 +6294,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بعد 12 جولة يفوز من لديه أقل عدد وأقل قيمة من الأوراق. النقاط = القيمة + 4 جزاء لكل ورقة."
+            "value" : "بعد 8 جولة يفوز من لديه أقل عدد وأقل قيمة من الأوراق. النقاط = القيمة + 4 جزاء لكل ورقة."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nach 12 Runden gewinnt, wer die wenigsten und niedrigsten Karten hat. Punkte = Werte + 4 Strafe je Karte."
+            "value" : "Nach 8 Runden gewinnt, wer die wenigsten und niedrigsten Karten hat. Punkte = Werte + 4 Strafe je Karte."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "After 12 rounds, whoever has the fewest and lowest-value cards wins. Score = card values + 4 penalty per card."
+            "value" : "After 8 rounds, whoever has the fewest and lowest-value cards wins. Score = card values + 4 penalty per card."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tras 12 rondas, gana quien tenga menos cartas y de menor valor. Puntos = valor + 4 de penalización por carta."
+            "value" : "Tras 8 rondas, gana quien tenga menos cartas y de menor valor. Puntos = valor + 4 de penalización por carta."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Après 12 tours, gagne celui qui a le moins de cartes et de plus faible valeur. Score = valeur + 4 de pénalité par carte."
+            "value" : "Après 8 tours, gagne celui qui a le moins de cartes et de plus faible valeur. Score = valeur + 4 de pénalité par carte."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "12 राउंड बाद सबसे कम और सबसे कम मान वाले पत्ते वाला जीतेगा। स्कोर = मान + प्रति पत्ता 4 जुर्माना।"
+            "value" : "8 राउंड बाद सबसे कम और सबसे कम मान वाले पत्ते वाला जीतेगा। स्कोर = मान + प्रति पत्ता 4 जुर्माना।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "12ラウンド後、枚数が最も少なく点数が最も低い手が勝ち。得点＝点数＋1枚あたり罰則4。"
+            "value" : "8ラウンド後、枚数が最も少なく点数が最も低い手が勝ち。得点＝点数＋1枚あたり罰則4。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Após 12 rodadas, vence quem tiver menos cartas e de menor valor. Pontos = valor + 4 de penalidade por carta."
+            "value" : "Após 8 rodadas, vence quem tiver menos cartas e de menor valor. Pontos = valor + 4 de penalidade por carta."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "12 turun sonunda en az sayıda ve en düşük değerde kartları olan kazanır. Puan = kart değeri + kart başına 4 ceza."
+            "value" : "8 turun sonunda en az sayıda ve en düşük değerde kartları olan kazanır. Puan = kart değeri + kart başına 4 ceza."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "12轮后，牌最少且点数最低者获胜。得分=点数+每张4罚分。"
+            "value" : "8轮后，牌最少且点数最低者获胜。得分=点数+每张4罚分。"
           }
         }
       }

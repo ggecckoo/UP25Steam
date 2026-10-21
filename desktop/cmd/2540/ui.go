@@ -369,7 +369,7 @@ func (g *app) drawGauge(dst *ebiten.Image, x, y, w float64) {
 	trackY := y + 36
 	fill(dst, x, trackY, w, 10, color.RGBA{0, 0, 0, 140})
 	if g.e.SumShown {
-		frac := float64(g.e.TableSum()) / 40
+		frac := float64(g.e.TableSum()) / game.Cap
 		if frac > 1 {
 			frac = 1
 		}
@@ -377,11 +377,11 @@ func (g *app) drawGauge(dst *ebiten.Image, x, y, w float64) {
 			fill(dst, x, trackY, w*frac, 10, g.outcomeColor())
 		}
 	}
-	mark := w * float64(game.Limit) / 40
+	mark := w * float64(game.Limit) / game.Cap
 	fill(dst, x+mark-1, trackY-4, 2, 18, colBrass)
 	fill(dst, x+w-2, trackY-4, 2, 18, colBrass)
-	g.fonts.text(dst, "30", 14, x+mark, trackY+16, 0, colBrass, alignCenter)
-	g.fonts.text(dst, "40", 14, x+w, trackY+16, 0, colBrass, alignCenter)
+	g.fonts.text(dst, strconv.Itoa(game.Limit), 14, x+mark, trackY+16, 0, colBrass, alignCenter)
+	g.fonts.text(dst, strconv.Itoa(game.Cap), 14, x+w, trackY+16, 0, colBrass, alignCenter)
 	if verdict := g.e.VerdictText(); verdict != "" {
 		g.fonts.text(dst, verdict, 16, x+w/2, trackY+34, w, g.outcomeColor(), alignCenter)
 	}
@@ -495,8 +495,10 @@ func (g *app) handSpots() []cardSpot {
 	if n == 0 {
 		return nil
 	}
+	// One row fits twelve cards at full size; a hand that has drawn past
+	// that splits in two.
 	rows := 1
-	if n > 8 {
+	if n > 12 {
 		rows = 2
 	}
 	cols := (n + rows - 1) / rows

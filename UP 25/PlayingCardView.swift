@@ -212,7 +212,7 @@ struct CardBack: View {
     }
 
     private var medallion: some View {
-        Text("30")
+        Text("25")
             .font(Typo.display(width * 0.20, bold: true))
             .foregroundColor(.brassHi)
             .frame(width: width * 0.46, height: width * 0.46)

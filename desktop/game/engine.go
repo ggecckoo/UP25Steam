@@ -69,7 +69,9 @@ type Engine struct {
 	Sound         bool
 	Paused        bool
 
-	middle     []Card
+	// The croupier's deck (top card last) and the cards played out this hand.
+	stock      []Card
+	discard    []Card
 	rng        *rand.Rand
 	timer      float64
 	stage      int
@@ -106,7 +108,8 @@ func (e *Engine) NewGame() {
 		e.Players[i] = Player{ID: i, Name: names[i], Human: i == 0, Hand: hand}
 	}
 	sortHand(e.Players[0].Hand)
-	e.middle = nil
+	e.stock = append([]Card(nil), deck[4*HandSize:]...)
+	e.discard = nil
 	e.Holder = e.rng.IntN(4)
 	e.Round = 1
 	e.Standings = nil
@@ -132,7 +135,8 @@ func (e *Engine) ReturnToMenu() {
 	e.canResume = false
 	e.Players = nil
 	e.Table = nil
-	e.middle = nil
+	e.stock = nil
+	e.discard = nil
 	e.Standings = nil
 	e.recorded = false
 	e.HasOutcome = false
@@ -243,6 +247,12 @@ func (e *Engine) TableSum() int {
 	}
 	return n
 }
+
+// Stock is the croupier's face-down deck, top card last.
+func (e *Engine) Stock() []Card { return e.stock }
+
+// Discard is the cards played out in earlier rounds of this hand.
+func (e *Engine) Discard() []Card { return e.discard }
 
 func (e *Engine) TurnToken() int { return e.Round*10 + len(e.Table) }
 
@@ -366,13 +376,21 @@ func (e *Engine) tickPlaying(dt float64) {
 }
 
 func (e *Engine) playAI(pi int) {
-	hand := e.Players[pi].Hand
-	if len(hand) == 0 {
+	if len(e.Players[pi].Hand) == 0 {
 		e.finishGame()
 		return
 	}
-	card := Pick(e.rng, hand, pi == e.Holder, e.TableSum(), 3-len(e.Table), e.Round)
-	e.place(pi, card)
+	e.place(pi, e.choose(pi))
+}
+
+// choose is the card a bot in seat pi plays now. It knows what a player at
+// the table knows: its own hand, the cards turned up in earlier rounds, and
+// how many cards lie face down this round, never what they are.
+func (e *Engine) choose(pi int) Card {
+	hand := e.Players[pi].Hand
+	holderDown := len(e.Table) > 0 && e.Table[0].By == e.Holder
+	unseen := unseenValues(hand, e.discard)
+	return Pick(e.rng, hand, pi == e.Holder, unseen, len(e.Table), holderDown, 3-len(e.Table))
 }
 
 func (e *Engine) place(pi int, card Card) {
@@ -456,28 +474,36 @@ func (e *Engine) applyRound() {
 		e.Outcome = OutcomeFor(e.TableSum())
 		e.HasOutcome = true
 	}
-	pile := make([]Card, 0, len(e.Table)+len(e.middle))
+	// The round's cards are played out; whoever draws gets the croupier's
+	// top cards. If the stock has too few, the played-out cards are shuffled
+	// back in with what is left of it first.
 	for _, played := range e.Table {
-		pile = append(pile, played.Card)
+		e.discard = append(e.discard, played.Card)
 	}
-	e.rng.Shuffle(len(pile), func(i, j int) { pile[i], pile[j] = pile[j], pile[i] })
-	pile = append(pile, e.middle...)
 	plan := Draws(e.Outcome, e.Holder)
+	wanted := 0
+	for _, n := range plan {
+		wanted += n
+	}
+	if wanted > len(e.stock) {
+		e.stock = append(e.stock, e.discard...)
+		e.discard = nil
+		e.rng.Shuffle(len(e.stock), func(i, j int) { e.stock[i], e.stock[j] = e.stock[j], e.stock[i] })
+	}
 	for _, pi := range e.Order() {
-		n := plan[pi]
-		if n <= 0 || len(pile) == 0 {
+		n := min(plan[pi], len(e.stock))
+		if n <= 0 {
 			continue
 		}
-		if n > len(pile) {
-			n = len(pile)
+		for k := 0; k < n; k++ {
+			top := len(e.stock) - 1
+			e.Players[pi].Hand = append(e.Players[pi].Hand, e.stock[top])
+			e.stock = e.stock[:top]
 		}
-		e.Players[pi].Hand = append(e.Players[pi].Hand, pile[:n]...)
-		pile = pile[n:]
 		if pi == 0 {
 			sortHand(e.Players[pi].Hand)
 		}
 	}
-	e.middle = append([]Card(nil), pile...)
 	e.Holder = (e.Holder + 1) % 4
 	e.Table = nil
 	e.HasOutcome = false
@@ -489,7 +515,7 @@ func (e *Engine) finishGame() {
 		return
 	}
 	for _, played := range e.Table {
-		e.middle = append(e.middle, played.Card)
+		e.discard = append(e.discard, played.Card)
 	}
 	e.Table = nil
 	e.Phase = PhaseOver
@@ -542,7 +568,7 @@ func worse(a, b Standing) bool {
 
 func (e *Engine) newDeck() []Card {
 	deck := make([]Card, 0, DeckSize)
-	for _, rank := range DeckFaces {
+	for rank := Ace; rank <= King; rank++ {
 		for suit := Suit(0); suit < 4; suit++ {
 			deck = append(deck, e.mint(rank, suit))
 		}
@@ -591,7 +617,7 @@ func withoutCard(hand []Card, id int) []Card {
 }
 
 func countCards(e *Engine) int {
-	n := len(e.middle) + len(e.Table)
+	n := len(e.stock) + len(e.discard) + len(e.Table)
 	for _, p := range e.Players {
 		n += len(p.Hand)
 	}
